@@ -1,0 +1,23 @@
+appId: dev.adirm.readerpet
+productName: ReaderPet
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - resources/**/*
+  - package.json
+  - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
+  - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
+asarUnpack:
+  - "**/*.{node,dll}"
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ReaderPet-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true

@@ -1,0 +1,23 @@
+node_modules/
+dist/
+out/
+build/
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# User data
+userData/
+data/*.db
+data/*.db-journal
+data/*.sqlite*
+.env
+.env.local
+settings.local.json
+
+# Build artifacts
+release/
+*.exe
+*.dmg
+*.AppImage
