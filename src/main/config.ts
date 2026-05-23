@@ -62,7 +62,7 @@ const defaults: AppConfig = {
     live2dModelPath: ''
   },
   petSprite: {
-    activePackageId: '',
+    activePackageId: 'yomeko',
     defaultFps: 8
   }
 };

@@ -1,0 +1,66 @@
+{
+  "id": "yomeko",
+  "displayName": "九十九夜梦",
+  "description": "银发紫眸 + 黑白多层交叠裙的桌宠读者. hatch-pet 流程通过 magicv4 / gpt-image-2 生成.",
+  "spritesheetPath": "spritesheet.webp",
+  "cellWidth": 256,
+  "cellHeight": 208,
+  "cols": 6,
+  "rows": 9,
+  "clips": {
+    "idle": {
+      "row": 0,
+      "frames": 6,
+      "fps": 6,
+      "loop": true
+    },
+    "happy": {
+      "row": 1,
+      "frames": 6,
+      "fps": 8,
+      "loop": true
+    },
+    "cry": {
+      "row": 2,
+      "frames": 6,
+      "fps": 6,
+      "loop": false
+    },
+    "talk": {
+      "row": 3,
+      "frames": 6,
+      "fps": 8,
+      "loop": true
+    },
+    "coffee": {
+      "row": 4,
+      "frames": 6,
+      "fps": 5,
+      "loop": true
+    },
+    "sleep": {
+      "row": 5,
+      "frames": 6,
+      "fps": 4,
+      "loop": true
+    },
+    "read": {
+      "row": 6,
+      "frames": 6,
+      "fps": 5,
+      "loop": true
+    },
+    "think": {
+      "row": 7,
+      "frames": 6,
+      "fps": 6,
+      "loop": true
+    },
+    "pocky": {
+      "row": 8,
+      "frames": 6,
+      "fps": 6,
+      "loop": true
+    }
+  }
+}
