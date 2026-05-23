@@ -13,7 +13,8 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: resolve('src/main/index.ts')
+        input: resolve('src/main/index.ts'),
+        external: ['memoryjs', 'playwright']
       }
     }
   },

@@ -68,6 +68,45 @@ export interface PanelConfig {
   live2dModelPath: string;
 }
 
+// ============ 桌宠精灵图 (兼容 hatch-pet atlas 格式) ============
+// hatch-pet 默认 9 行 x 8 列, 每格 192x208, 整图 1536x1872
+// 行顺序 (Codex contract): 0 idle / 1 running-right / 2 running-left / 3 waving /
+//                         4 jumping / 5 failed / 6 waiting / 7 running / 8 review
+export type PetState =
+  | 'idle'
+  | 'talk'        // 默认映射: row=waving
+  | 'think'       // 默认映射: row=running (非定向)
+  | 'happy'       // 默认映射: row=jumping
+  | 'sleep'       // 默认映射: row=waiting
+  | 'failed';
+
+export interface PetStateClip {
+  row: number;          // 第几行 (0..rows-1)
+  frames: number;       // 该行有效帧数 (1..cols), 透明 cell 不算
+  fps: number;          // 播放帧率
+  loop?: boolean;       // 默认 true
+}
+
+export interface PetSpritePackage {
+  id: string;                       // 目录名
+  displayName: string;
+  description?: string;
+  spritesheetPath: string;          // 相对包内, 通常 spritesheet.webp
+  spritesheetDataUrl?: string;      // 主进程读完后填这里, 渲染端直接用
+  cellWidth: number;                // hatch-pet = 192
+  cellHeight: number;               // hatch-pet = 208
+  cols: number;                     // hatch-pet = 8
+  rows: number;                     // hatch-pet = 9
+  clips: Record<PetState, PetStateClip>;
+}
+
+export interface PetSpriteConfig {
+  // 当前选用的精灵图包 id; 空 = 用内置 SVG 占位
+  activePackageId: string;
+  // 默认 idle 时帧率回退 (clip.fps 优先)
+  defaultFps: number;
+}
+
 export interface AppConfig {
   providers: ProviderConfig[];
   activeProviderId: string | null;
@@ -77,6 +116,7 @@ export interface AppConfig {
     alwaysOnTop: boolean;
     petSize: number;
   };
+  autoLaunch: boolean;            // 开机自启
   safetyMode: SafetyMode;
   safetyModeLastChangedAt: number;
   capabilities: CapabilityFlags;
@@ -85,6 +125,7 @@ export interface AppConfig {
   chatter: ChatterConfig;
   tts: TTSConfig;
   panel: PanelConfig;
+  petSprite: PetSpriteConfig;
 }
 
 export interface ChatMessage {

@@ -21,6 +21,7 @@ const defaults: AppConfig = {
     alwaysOnTop: true,
     petSize: 100
   },
+  autoLaunch: false,
   safetyMode: 'safe',
   safetyModeLastChangedAt: 0,
   capabilities: {
@@ -59,6 +60,10 @@ const defaults: AppConfig = {
   },
   panel: {
     live2dModelPath: ''
+  },
+  petSprite: {
+    activePackageId: '',
+    defaultFps: 8
   }
 };
 

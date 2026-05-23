@@ -9,6 +9,7 @@ import type {
   FactStatus,
   MemoryStats,
   PersonaMeta,
+  PetSpritePackage,
   ProviderConfig,
   SafetyMode,
   TaskRow
@@ -111,7 +112,19 @@ const api = {
   loadLive2dAsset: (
     p: string
   ): Promise<{ ok: boolean; dataUrl?: string; reason?: string }> =>
-    ipcRenderer.invoke('panel:loadLive2dAsset', p)
+    ipcRenderer.invoke('panel:loadLive2dAsset', p),
+
+  // 开机自启
+  setAutoLaunch: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('autoLaunch:set', enabled),
+  getAutoLaunch: (): Promise<boolean> => ipcRenderer.invoke('autoLaunch:get'),
+
+  // 桌宠精灵图
+  petSpriteList: (): Promise<Array<{ id: string; displayName: string; description?: string }>> =>
+    ipcRenderer.invoke('petSprite:list'),
+  petSpriteLoad: (id: string): Promise<PetSpritePackage | null> =>
+    ipcRenderer.invoke('petSprite:load', id),
+  petSpriteOpenUserDir: (): Promise<string> => ipcRenderer.invoke('petSprite:openUserDir')
 };
 
 contextBridge.exposeInMainWorld('api', api);

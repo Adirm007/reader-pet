@@ -5,10 +5,17 @@ directories:
   buildResources: build
 files:
   - out/**/*
-  - resources/**/*
   - package.json
   - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
   - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
+extraResources:
+  - from: src/shared/personas.yaml
+    to: personas.yaml
+  - from: resources/pet-sprites
+    to: pet-sprites
+    filter:
+      - "**/*"
+      - "!README.md"
 asarUnpack:
   - "**/*.{node,dll}"
 win:
@@ -21,3 +28,4 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  shortcutName: 九十九夜梦

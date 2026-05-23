@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AppConfig } from '../../../../shared/types';
 
 export default function WindowSection({
@@ -11,13 +11,26 @@ export default function WindowSection({
   const [alwaysOnTop, setAlwaysOnTop] = useState(cfg.window.alwaysOnTop);
   const [petSize, setPetSize] = useState(cfg.window.petSize);
   const [live2dPath, setLive2dPath] = useState(cfg.panel?.live2dModelPath ?? '');
+  const [autoLaunch, setAutoLaunch] = useState(cfg.autoLaunch ?? false);
+  const [msg, setMsg] = useState('');
+
+  // 同步操作系统真实状态 (用户可能在系统设置里改过)
+  useEffect(() => {
+    void (async () => {
+      const real = await window.api.getAutoLaunch();
+      setAutoLaunch(real);
+    })();
+  }, []);
 
   const save = async () => {
+    const realAuto = await window.api.setAutoLaunch(autoLaunch);
     await window.api.setConfig({
       window: { alwaysOnTop, petSize },
-      panel: { live2dModelPath: live2dPath.trim() }
+      panel: { live2dModelPath: live2dPath.trim() },
+      autoLaunch: realAuto
     });
     await window.api.reloadPetWindow();
+    setMsg(`已保存. 开机自启: ${realAuto ? '已开启' : '已关闭'}`);
     onChange();
   };
 
@@ -33,6 +46,15 @@ export default function WindowSection({
           onChange={(e) => setAlwaysOnTop(e.target.checked)}
         />
         始终置顶 (在所有窗口之上)
+      </label>
+
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={autoLaunch}
+          onChange={(e) => setAutoLaunch(e.target.checked)}
+        />
+        开机自启 (写入操作系统登录项)
       </label>
 
       <label>
@@ -65,10 +87,10 @@ export default function WindowSection({
         <button className="primary" onClick={save}>保存并应用</button>
         <button onClick={() => window.api.openPanel()}>打开全屏面板</button>
       </div>
+      {msg && <div className="test-msg">{msg}</div>}
 
       <h3 style={{ marginTop: 32 }}>即将上线</h3>
       <ul className="muted">
-        <li>开机自启动开关</li>
         <li>全局快捷键 (呼出输入框 / 切换人设 / 全屏面板)</li>
         <li>Live2D Web SDK 接入 (动态立绘 + 口型同步)</li>
       </ul>

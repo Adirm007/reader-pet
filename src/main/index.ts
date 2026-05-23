@@ -198,6 +198,34 @@ ipcMain.handle('window:reload-pet', () => {
   createPetWindow();
 });
 
+// 开机自启 (写入操作系统 login items / 注册表 Run 键)
+function applyAutoLaunch(enabled: boolean) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      openAsHidden: false,
+      args: ['--autostart']
+    });
+  } catch {
+    /* 某些平台 / portable 模式可能失败, 不致命 */
+  }
+}
+ipcMain.handle('autoLaunch:set', (_, enabled: boolean) => {
+  applyAutoLaunch(enabled);
+  try {
+    return app.getLoginItemSettings({ args: ['--autostart'] }).openAtLogin;
+  } catch {
+    return enabled;
+  }
+});
+ipcMain.handle('autoLaunch:get', () => {
+  try {
+    return app.getLoginItemSettings({ args: ['--autostart'] }).openAtLogin;
+  } catch {
+    return false;
+  }
+});
+
 app.whenReady().then(() => {
   registerIpc(
     () => settingsWindow,
@@ -208,8 +236,12 @@ app.whenReady().then(() => {
   createPetWindow();
   createTray();
 
-  // 如配置已启用 hook 服务, 自动起
   const cfg = getConfig();
+
+  // 应用 autoLaunch 配置 (启动时同步一次, 让操作系统层和 cfg 一致)
+  applyAutoLaunch(!!cfg.autoLaunch);
+
+  // 如配置已启用 hook 服务, 自动起
   if (cfg.claudeCode.hookServerEnabled) {
     startBridge().catch(() => {});
   }

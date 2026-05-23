@@ -22,6 +22,8 @@ import {
   triggerChatterNow
 } from './proactive';
 import { synthesize, pingTTS } from './tts';
+import { listSpritePackages, loadSpritePackage, getUserSpriteDir } from './pet-sprites';
+import { shell } from 'electron';
 import {
   recentEpisodes,
   searchEpisodes,
@@ -142,4 +144,19 @@ export function registerIpc(
   // TTS
   ipcMain.handle('tts:ping', () => pingTTS());
   ipcMain.handle('tts:synthesize', (_, text: string) => synthesize(text));
+
+  // 桌宠精灵图
+  ipcMain.handle('petSprite:list', () => listSpritePackages());
+  ipcMain.handle('petSprite:load', (_, id: string) => loadSpritePackage(id));
+  ipcMain.handle('petSprite:openUserDir', async () => {
+    const dir = getUserSpriteDir();
+    try {
+      const fsmod = await import('fs');
+      if (!fsmod.existsSync(dir)) fsmod.mkdirSync(dir, { recursive: true });
+    } catch {
+      /* ignore */
+    }
+    await shell.openPath(dir);
+    return dir;
+  });
 }
