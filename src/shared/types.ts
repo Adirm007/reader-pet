@@ -49,6 +49,19 @@ export interface ChatterConfig {
   maxMinutes: number;
 }
 
+export interface TTSConfig {
+  enabled: boolean;
+  baseUrl: string;            // 例如 http://127.0.0.1:9880
+  // 透传 GPT-SoVITS /tts 的字段; 留空则用服务端默认
+  refAudioPath: string;       // 参考音频本地绝对路径
+  promptText: string;         // 参考音频文字
+  promptLang: string;         // zh / en / ja / auto
+  textLang: string;           // zh / en / ja / auto
+  speedFactor: number;        // 0.6~1.4 比较常见
+  // 是否对每条桌宠气泡都自动 TTS (false 时, 只对你点击的气泡播放)
+  autoSpeakOnBubble: boolean;
+}
+
 export interface AppConfig {
   providers: ProviderConfig[];
   activeProviderId: string | null;
@@ -64,6 +77,7 @@ export interface AppConfig {
   claudeCode: ClaudeCodeConfig;
   dailyLetter: DailyLetterConfig;
   chatter: ChatterConfig;
+  tts: TTSConfig;
 }
 
 export interface ChatMessage {

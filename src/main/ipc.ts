@@ -21,6 +21,7 @@ import {
   triggerLetterNow,
   triggerChatterNow
 } from './proactive';
+import { synthesize, pingTTS } from './tts';
 import {
   recentEpisodes,
   searchEpisodes,
@@ -137,4 +138,8 @@ export function registerIpc(
   // 主动行为
   ipcMain.handle('proactive:triggerLetter', () => triggerLetterNow());
   ipcMain.handle('proactive:triggerChatter', () => triggerChatterNow());
+
+  // TTS
+  ipcMain.handle('tts:ping', () => pingTTS());
+  ipcMain.handle('tts:synthesize', (_, text: string) => synthesize(text));
 }

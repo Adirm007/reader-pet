@@ -96,7 +96,14 @@ const api = {
   triggerLetter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
     ipcRenderer.invoke('proactive:triggerLetter'),
   triggerChatter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
-    ipcRenderer.invoke('proactive:triggerChatter')
+    ipcRenderer.invoke('proactive:triggerChatter'),
+
+  // TTS
+  ttsPing: (): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('tts:ping'),
+  ttsSynthesize: (
+    text: string
+  ): Promise<{ ok: boolean; base64?: string; mime?: string; reason?: string }> =>
+    ipcRenderer.invoke('tts:synthesize', text)
 };
 
 contextBridge.exposeInMainWorld('api', api);

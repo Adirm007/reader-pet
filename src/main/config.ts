@@ -46,6 +46,16 @@ const defaults: AppConfig = {
     enabled: false,
     minMinutes: 20,
     maxMinutes: 240
+  },
+  tts: {
+    enabled: false,
+    baseUrl: 'http://127.0.0.1:9880',
+    refAudioPath: '',
+    promptText: '',
+    promptLang: 'zh',
+    textLang: 'zh',
+    speedFactor: 1.0,
+    autoSpeakOnBubble: true
   }
 };
 
