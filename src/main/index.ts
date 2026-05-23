@@ -1,6 +1,7 @@
 // 主进程入口
 import { app, BrowserWindow, Menu, Tray, ipcMain, screen, nativeImage } from 'electron';
-import { join } from 'path';
+import { join, extname } from 'path';
+import { promises as fs } from 'fs';
 import { registerIpc } from './ipc';
 import { getConfig } from './config';
 import { setPetWindowGetter, startBridge, stopBridge } from './claude-code-bridge';
@@ -9,6 +10,7 @@ import { closeMemory } from './memory/store';
 
 let petWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let panelWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
 function createPetWindow() {
@@ -111,12 +113,80 @@ function createTray() {
       label: '设置',
       click: () => openSettingsWindow()
     },
+    {
+      label: '全屏面板',
+      click: () => openPanelWindow()
+    },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() }
   ]);
   tray.setContextMenu(menu);
   tray.on('double-click', () => petWindow?.show());
 }
+
+function openPanelWindow() {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.show();
+    panelWindow.focus();
+    return;
+  }
+  panelWindow = new BrowserWindow({
+    width: 1100,
+    height: 720,
+    title: '九十九夜梦 · 全屏面板',
+    frame: true,
+    transparent: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+  const baseUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (baseUrl) {
+    panelWindow.loadURL(`${baseUrl}/?win=panel`);
+  } else {
+    panelWindow.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: { win: 'panel' }
+    });
+  }
+  panelWindow.on('closed', () => {
+    panelWindow = null;
+  });
+}
+
+ipcMain.handle('panel:open', () => openPanelWindow());
+ipcMain.handle('panel:close', () => panelWindow?.close());
+
+// 渲染端通过这个 IPC 把磁盘图片转 data: URL — 绕过 file:// 限制
+ipcMain.handle('panel:loadLive2dAsset', async (_, p: string) => {
+  if (!p || typeof p !== 'string') return { ok: false, reason: '空路径' };
+  try {
+    const ext = extname(p).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp'
+    };
+    if (!mimeMap[ext]) {
+      return { ok: false, reason: '暂只支持 png/jpg/gif/webp 静态立绘; .model3.json 等待 Live2D Web SDK 接入' };
+    }
+    const buf = await fs.readFile(p);
+    return {
+      ok: true,
+      dataUrl: `data:${mimeMap[ext]};base64,${buf.toString('base64')}`
+    };
+  } catch (e: any) {
+    return { ok: false, reason: e?.message ?? String(e) };
+  }
+});
 
 ipcMain.handle('pet:hide', () => petWindow?.hide());
 ipcMain.handle('pet:quit', () => app.quit());

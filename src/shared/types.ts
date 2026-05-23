@@ -62,6 +62,12 @@ export interface TTSConfig {
   autoSpeakOnBubble: boolean;
 }
 
+export interface PanelConfig {
+  // 全屏面板里的立绘槽 — 留绝对路径, 留空则只显示占位
+  // 支持 .png / .jpg / .jpeg / .gif / .webp; .model3.json 暂不解析 (留作后续 Live2D Web SDK 接入)
+  live2dModelPath: string;
+}
+
 export interface AppConfig {
   providers: ProviderConfig[];
   activeProviderId: string | null;
@@ -78,6 +84,7 @@ export interface AppConfig {
   dailyLetter: DailyLetterConfig;
   chatter: ChatterConfig;
   tts: TTSConfig;
+  panel: PanelConfig;
 }
 
 export interface ChatMessage {

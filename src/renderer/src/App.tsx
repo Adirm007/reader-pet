@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Pet from './pet/Pet';
 import Settings from './settings/Settings';
+import Panel from './panel/Panel';
 
 export default function App() {
   const params = new URLSearchParams(window.location.search);
@@ -20,5 +21,7 @@ export default function App() {
 
   if (!ready) return <div style={{ padding: 20 }}>加载中…</div>;
 
-  return win === 'settings' ? <Settings /> : <Pet />;
+  if (win === 'settings') return <Settings />;
+  if (win === 'panel') return <Panel />;
+  return <Pet />;
 }

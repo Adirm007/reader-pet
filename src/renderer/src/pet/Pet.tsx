@@ -125,6 +125,7 @@ export default function Pet() {
           <button onClick={send} disabled={!hasProvider || pending || !inputText.trim()}>
             {pending ? '…' : '发送'}
           </button>
+          <button className="ghost" onClick={() => window.api.openPanel()}>面板</button>
           <button className="ghost" onClick={() => window.api.openSettings()}>设置</button>
         </div>
       )}

@@ -103,7 +103,15 @@ const api = {
   ttsSynthesize: (
     text: string
   ): Promise<{ ok: boolean; base64?: string; mime?: string; reason?: string }> =>
-    ipcRenderer.invoke('tts:synthesize', text)
+    ipcRenderer.invoke('tts:synthesize', text),
+
+  // 全屏面板
+  openPanel: () => ipcRenderer.invoke('panel:open'),
+  closePanel: () => ipcRenderer.invoke('panel:close'),
+  loadLive2dAsset: (
+    p: string
+  ): Promise<{ ok: boolean; dataUrl?: string; reason?: string }> =>
+    ipcRenderer.invoke('panel:loadLive2dAsset', p)
 };
 
 contextBridge.exposeInMainWorld('api', api);

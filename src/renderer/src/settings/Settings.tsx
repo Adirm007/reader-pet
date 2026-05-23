@@ -110,7 +110,8 @@ function AboutSection() {
       <p className="muted">本工具仅供个人使用与小范围分享, 不分发任何 API key。</p>
       <h3 style={{ marginTop: 24 }}>即将上线</h3>
       <ul className="muted">
-        <li>全屏面板 + Live2D 立绘槽</li>
+        <li>Live2D Web SDK 接入 (动态立绘 + 口型同步)</li>
+        <li>打包发布 (electron-builder) + 开机自启</li>
       </ul>
     </div>
   );

@@ -56,6 +56,9 @@ const defaults: AppConfig = {
     textLang: 'zh',
     speedFactor: 1.0,
     autoSpeakOnBubble: true
+  },
+  panel: {
+    live2dModelPath: ''
   }
 };
 
