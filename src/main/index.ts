@@ -3,6 +3,7 @@ import { app, BrowserWindow, Menu, Tray, ipcMain, screen, nativeImage } from 'el
 import { join } from 'path';
 import { registerIpc } from './ipc';
 import { getConfig } from './config';
+import { setPetWindowGetter, startBridge, stopBridge } from './claude-code-bridge';
 
 let petWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -130,12 +131,23 @@ app.whenReady().then(() => {
     () => settingsWindow,
     () => openSettingsWindow()
   );
+  setPetWindowGetter(() => petWindow);
   createPetWindow();
   createTray();
+
+  // 如配置已启用 hook 服务, 自动起
+  const cfg = getConfig();
+  if (cfg.claudeCode.hookServerEnabled) {
+    startBridge().catch(() => {});
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createPetWindow();
   });
+});
+
+app.on('before-quit', () => {
+  stopBridge();
 });
 
 // 桌宠常驻 — 不监听 window-all-closed

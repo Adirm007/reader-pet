@@ -23,6 +23,16 @@ export default function Pet() {
     })();
   }, []);
 
+  // 接收主进程推送的气泡 (Claude Code 完成汇报 / 主动行为)
+  useEffect(() => {
+    const off = window.api.onPetBubble((p) => {
+      setBubble(p.text);
+    });
+    return () => {
+      off();
+    };
+  }, []);
+
   // 初次启动 / 未配置时, 引导去设置
   useEffect(() => {
     if (hasProvider === null) return;

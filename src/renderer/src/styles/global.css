@@ -465,3 +465,113 @@ button:disabled {
   outline: none;
   border-color: #5d4ec0;
 }
+
+/* ============ 安全模式 ============ */
+.mode-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e2dfee;
+  border-radius: 10px;
+  padding: 14px 16px;
+  gap: 16px;
+}
+.mode-label {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.cap-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e2dfee;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12.5px;
+}
+.cap-table th,
+.cap-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid #efebf8;
+}
+.cap-table th {
+  background: #f5f3fb;
+  font-weight: 600;
+  font-size: 12px;
+}
+.cap-table tr:last-child td {
+  border-bottom: none;
+}
+.risk {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.risk-low { background: #e3f4dd; color: #4a7a36; }
+.risk-medium { background: #fff3d6; color: #8a6a1a; }
+.risk-high { background: #ffe0d0; color: #a0521a; }
+.risk-critical { background: #ffd6d6; color: #a02a2a; }
+
+/* 危险模式弹窗 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 16, 32, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 22px 24px;
+  width: 540px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+.modal h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
+  color: #c2453f;
+}
+.danger-warning {
+  background: #fff5f4;
+  border: 1px solid #f5c8c5;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #5a3535;
+}
+.danger-warning ul {
+  margin: 6px 0 6px 16px;
+}
+.danger-warning li {
+  margin-bottom: 2px;
+}
+.danger-warning p {
+  margin-bottom: 6px;
+}
+.countdown {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #fef6e6;
+  border: 1px dashed #d8b06a;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #6a4f1a;
+}
+.countdown strong {
+  font-size: 16px;
+  color: #c2453f;
+}
+

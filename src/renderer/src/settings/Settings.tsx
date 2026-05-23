@@ -4,8 +4,10 @@ import ProvidersSection from './sections/ProvidersSection';
 import PersonaSection from './sections/PersonaSection';
 import ProfileSection from './sections/ProfileSection';
 import WindowSection from './sections/WindowSection';
+import SafetySection from './sections/SafetySection';
+import ClaudeCodeSection from './sections/ClaudeCodeSection';
 
-type Tab = 'providers' | 'persona' | 'profile' | 'window' | 'about';
+type Tab = 'providers' | 'persona' | 'profile' | 'safety' | 'claudecode' | 'window' | 'about';
 
 export default function Settings() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
@@ -31,6 +33,12 @@ export default function Settings() {
         <NavBtn active={tab === 'providers'} onClick={() => setTab('providers')}>API 提供商</NavBtn>
         <NavBtn active={tab === 'persona'} onClick={() => setTab('persona')}>人设</NavBtn>
         <NavBtn active={tab === 'profile'} onClick={() => setTab('profile')}>用户 Profile</NavBtn>
+        <NavBtn active={tab === 'safety'} onClick={() => setTab('safety')}>
+          安全模式 {cfg.safetyMode === 'danger' ? '⚠' : ''}
+        </NavBtn>
+        <NavBtn active={tab === 'claudecode'} onClick={() => setTab('claudecode')}>
+          Claude Code
+        </NavBtn>
         <NavBtn active={tab === 'window'} onClick={() => setTab('window')}>窗口</NavBtn>
         <NavBtn active={tab === 'about'} onClick={() => setTab('about')}>关于</NavBtn>
         <div style={{ flex: 1 }} />
@@ -43,6 +51,8 @@ export default function Settings() {
           <PersonaSection cfg={cfg} personas={personas} onChange={refresh} />
         )}
         {tab === 'profile' && <ProfileSection cfg={cfg} onChange={refresh} />}
+        {tab === 'safety' && <SafetySection cfg={cfg} onChange={refresh} />}
+        {tab === 'claudecode' && <ClaudeCodeSection cfg={cfg} onChange={refresh} />}
         {tab === 'window' && <WindowSection cfg={cfg} onChange={refresh} />}
         {tab === 'about' && <AboutSection />}
       </main>
@@ -82,13 +92,10 @@ function AboutSection() {
       <h3 style={{ marginTop: 24 }}>即将上线</h3>
       <ul className="muted">
         <li>五层记忆系统 (Profile / Recent / Episode / Facts / Task)</li>
-        <li>安全 / 危险双模式权限层</li>
-        <li>Claude Code 桥接 (Stop hook 完成播报)</li>
         <li>每日来信 + 话痨模式</li>
         <li>GPT-SoVITS TTS 接入</li>
         <li>Anthropic + Gemini Provider 适配</li>
         <li>全屏面板 + Live2D 立绘槽</li>
-        <li>游戏内存读写 (Cheat Engine 风格, 仅危险模式)</li>
       </ul>
     </div>
   );
