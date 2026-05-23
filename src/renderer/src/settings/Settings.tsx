@@ -9,6 +9,7 @@ import ClaudeCodeSection from './sections/ClaudeCodeSection';
 import MemorySection from './sections/MemorySection';
 import ProactiveSection from './sections/ProactiveSection';
 import TTSSection from './sections/TTSSection';
+import PetSpriteSection from './sections/PetSpriteSection';
 
 type Tab =
   | 'providers'
@@ -19,6 +20,7 @@ type Tab =
   | 'claudecode'
   | 'proactive'
   | 'tts'
+  | 'sprite'
   | 'window'
   | 'about';
 
@@ -55,6 +57,7 @@ export default function Settings() {
         </NavBtn>
         <NavBtn active={tab === 'proactive'} onClick={() => setTab('proactive')}>主动行为</NavBtn>
         <NavBtn active={tab === 'tts'} onClick={() => setTab('tts')}>TTS</NavBtn>
+        <NavBtn active={tab === 'sprite'} onClick={() => setTab('sprite')}>桌宠精灵</NavBtn>
         <NavBtn active={tab === 'window'} onClick={() => setTab('window')}>窗口</NavBtn>
         <NavBtn active={tab === 'about'} onClick={() => setTab('about')}>关于</NavBtn>
         <div style={{ flex: 1 }} />
@@ -72,6 +75,7 @@ export default function Settings() {
         {tab === 'claudecode' && <ClaudeCodeSection cfg={cfg} onChange={refresh} />}
         {tab === 'proactive' && <ProactiveSection cfg={cfg} onChange={refresh} />}
         {tab === 'tts' && <TTSSection cfg={cfg} onChange={refresh} />}
+        {tab === 'sprite' && <PetSpriteSection cfg={cfg} onChange={refresh} />}
         {tab === 'window' && <WindowSection cfg={cfg} onChange={refresh} />}
         {tab === 'about' && <AboutSection />}
       </main>
@@ -111,7 +115,7 @@ function AboutSection() {
       <h3 style={{ marginTop: 24 }}>即将上线</h3>
       <ul className="muted">
         <li>Live2D Web SDK 接入 (动态立绘 + 口型同步)</li>
-        <li>打包发布 (electron-builder) + 开机自启</li>
+        <li>全局快捷键</li>
       </ul>
     </div>
   );
