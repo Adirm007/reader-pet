@@ -1,28 +1,24 @@
-import { useState } from 'react';
-import PetSprite from './components/PetSprite';
-import ChatBubble from './components/ChatBubble';
+import { useEffect, useState } from 'react';
+import Pet from './pet/Pet';
+import Settings from './settings/Settings';
 
 export default function App() {
-  const [bubble, setBubble] = useState<string | null>(
-    '初次见面，亲爱的作家先生(或小姐)。'
-  );
+  const params = new URLSearchParams(window.location.search);
+  const win = params.get('win') ?? 'pet';
 
-  return (
-    <div className="pet-root">
-      {bubble && (
-        <ChatBubble text={bubble} onClose={() => setBubble(null)} />
-      )}
-      <PetSprite onClick={() => setBubble(getRandomGreeting())} />
-    </div>
-  );
-}
+  // 给 body 加 class 用于按窗口切换样式
+  useEffect(() => {
+    document.body.classList.add(`win-${win}`);
+    return () => document.body.classList.remove(`win-${win}`);
+  }, [win]);
 
-function getRandomGreeting(): string {
-  const lines = [
-    '今天的剧情真是精彩呢，作家先生。',
-    '需要休息吗？',
-    '我一直在这里。',
-    '这本书今天读到这一页，已经足够了。'
-  ];
-  return lines[Math.floor(Math.random() * lines.length)];
+  // 加载完成后渲染对应视图
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (window.api) setReady(true);
+  }, []);
+
+  if (!ready) return <div style={{ padding: 20 }}>加载中…</div>;
+
+  return win === 'settings' ? <Settings /> : <Pet />;
 }

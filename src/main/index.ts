@@ -1,22 +1,29 @@
 // 主进程入口
 import { app, BrowserWindow, Menu, Tray, ipcMain, screen, nativeImage } from 'electron';
 import { join } from 'path';
+import { registerIpc } from './ipc';
+import { getConfig } from './config';
 
 let petWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
 function createPetWindow() {
   const display = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = display.workAreaSize;
+  const cfg = getConfig();
+  const scale = (cfg.window.petSize ?? 100) / 100;
+  const w = Math.round(260 * scale);
+  const h = Math.round(360 * scale);
 
   petWindow = new BrowserWindow({
-    width: 220,
-    height: 280,
-    x: screenWidth - 260,
-    y: screenHeight - 320,
+    width: w,
+    height: h,
+    x: screenWidth - w - 40,
+    y: screenHeight - h - 40,
     frame: false,
     transparent: true,
-    alwaysOnTop: true,
+    alwaysOnTop: cfg.window.alwaysOnTop,
     resizable: false,
     skipTaskbar: true,
     hasShadow: false,
@@ -28,13 +35,16 @@ function createPetWindow() {
     }
   });
 
-  petWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (cfg.window.alwaysOnTop) {
+    petWindow.setAlwaysOnTop(true, 'screen-saver');
+  }
   petWindow.setVisibleOnAllWorkspaces(true);
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    petWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
+  const baseUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (baseUrl) {
+    petWindow.loadURL(`${baseUrl}/?win=pet`);
   } else {
-    petWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    petWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { win: 'pet' } });
   }
 
   petWindow.on('closed', () => {
@@ -42,8 +52,45 @@ function createPetWindow() {
   });
 }
 
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 760,
+    height: 620,
+    title: '九十九夜梦 · 设置',
+    frame: true,
+    transparent: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    alwaysOnTop: false,
+    skipTaskbar: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+  const baseUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (baseUrl) {
+    settingsWindow.loadURL(`${baseUrl}/?win=settings`);
+  } else {
+    settingsWindow.loadFile(join(__dirname, '../renderer/index.html'), {
+      query: { win: 'settings' }
+    });
+  }
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+}
+
 function createTray() {
-  // 占位托盘图标 — 后续替换为正式 ico
   const icon = nativeImage.createEmpty();
   tray = new Tray(icon);
   tray.setToolTip('九十九夜梦');
@@ -59,30 +106,30 @@ function createTray() {
     },
     {
       label: '设置',
-      click: () => {
-        petWindow?.webContents.send('open-settings');
-      }
+      click: () => openSettingsWindow()
     },
     { type: 'separator' },
-    {
-      label: '退出',
-      click: () => {
-        app.quit();
-      }
-    }
+    { label: '退出', click: () => app.quit() }
   ]);
   tray.setContextMenu(menu);
-
-  tray.on('double-click', () => {
-    petWindow?.show();
-  });
+  tray.on('double-click', () => petWindow?.show());
 }
 
-// IPC: 拖拽位置同步(渲染端通过 -webkit-app-region: drag 即可, 这里留作扩展)
 ipcMain.handle('pet:hide', () => petWindow?.hide());
 ipcMain.handle('pet:quit', () => app.quit());
+ipcMain.handle('window:reload-pet', () => {
+  if (petWindow) {
+    petWindow.close();
+    petWindow = null;
+  }
+  createPetWindow();
+});
 
 app.whenReady().then(() => {
+  registerIpc(
+    () => settingsWindow,
+    () => openSettingsWindow()
+  );
   createPetWindow();
   createTray();
 
@@ -91,6 +138,4 @@ app.whenReady().then(() => {
   });
 });
 
-// 桌宠应常驻, 不因关窗退出: 不监听 window-all-closed 即可
-// (除 macOS 外, 默认行为是关窗后退出 — 但 tray 持有应用所以不会真退出)
-
+// 桌宠常驻 — 不监听 window-all-closed
