@@ -7,6 +7,7 @@ import WindowSection from './sections/WindowSection';
 import SafetySection from './sections/SafetySection';
 import ClaudeCodeSection from './sections/ClaudeCodeSection';
 import MemorySection from './sections/MemorySection';
+import ProactiveSection from './sections/ProactiveSection';
 
 type Tab =
   | 'providers'
@@ -15,6 +16,7 @@ type Tab =
   | 'memory'
   | 'safety'
   | 'claudecode'
+  | 'proactive'
   | 'window'
   | 'about';
 
@@ -49,6 +51,7 @@ export default function Settings() {
         <NavBtn active={tab === 'claudecode'} onClick={() => setTab('claudecode')}>
           Claude Code
         </NavBtn>
+        <NavBtn active={tab === 'proactive'} onClick={() => setTab('proactive')}>主动行为</NavBtn>
         <NavBtn active={tab === 'window'} onClick={() => setTab('window')}>窗口</NavBtn>
         <NavBtn active={tab === 'about'} onClick={() => setTab('about')}>关于</NavBtn>
         <div style={{ flex: 1 }} />
@@ -64,6 +67,7 @@ export default function Settings() {
         {tab === 'memory' && <MemorySection />}
         {tab === 'safety' && <SafetySection cfg={cfg} onChange={refresh} />}
         {tab === 'claudecode' && <ClaudeCodeSection cfg={cfg} onChange={refresh} />}
+        {tab === 'proactive' && <ProactiveSection cfg={cfg} onChange={refresh} />}
         {tab === 'window' && <WindowSection cfg={cfg} onChange={refresh} />}
         {tab === 'about' && <AboutSection />}
       </main>
@@ -102,7 +106,6 @@ function AboutSection() {
       <p className="muted">本工具仅供个人使用与小范围分享, 不分发任何 API key。</p>
       <h3 style={{ marginTop: 24 }}>即将上线</h3>
       <ul className="muted">
-        <li>每日来信 + 话痨模式</li>
         <li>GPT-SoVITS TTS 接入</li>
         <li>全屏面板 + Live2D 立绘槽</li>
       </ul>

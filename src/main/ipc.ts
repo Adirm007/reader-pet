@@ -17,6 +17,11 @@ import {
 } from './claude-code-hook-installer';
 import { startBridge, stopBridge, isBridgeRunning } from './claude-code-bridge';
 import {
+  rescheduleProactive,
+  triggerLetterNow,
+  triggerChatterNow
+} from './proactive';
+import {
   recentEpisodes,
   searchEpisodes,
   listFacts,
@@ -34,7 +39,18 @@ export function registerIpc(
 ) {
   // 配置
   ipcMain.handle('config:get', () => getConfig());
-  ipcMain.handle('config:set', (_, patch) => setConfig(patch));
+  ipcMain.handle('config:set', (_, patch) => {
+    const next = setConfig(patch);
+    // 主动行为相关配置变化时重排计时器
+    if (
+      patch &&
+      (Object.prototype.hasOwnProperty.call(patch, 'dailyLetter') ||
+        Object.prototype.hasOwnProperty.call(patch, 'chatter'))
+    ) {
+      rescheduleProactive();
+    }
+    return next;
+  });
 
   // 安全模式切换 — 必须由 UI 经过倒计时和二次确认; 这里再做一道"距上次切换不少于 0.5s"防误触
   ipcMain.handle('safety:set', (_, mode: SafetyMode) => {
@@ -117,4 +133,8 @@ export function registerIpc(
     return { ok: true };
   });
   ipcMain.handle('mem:listTasks', (_, limit: number) => listTasks(limit));
+
+  // 主动行为
+  ipcMain.handle('proactive:triggerLetter', () => triggerLetterNow());
+  ipcMain.handle('proactive:triggerChatter', () => triggerChatterNow());
 }

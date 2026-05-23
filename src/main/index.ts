@@ -4,6 +4,7 @@ import { join } from 'path';
 import { registerIpc } from './ipc';
 import { getConfig } from './config';
 import { setPetWindowGetter, startBridge, stopBridge } from './claude-code-bridge';
+import { setProactivePetWindowGetter, startProactive, stopProactive } from './proactive';
 import { closeMemory } from './memory/store';
 
 let petWindow: BrowserWindow | null = null;
@@ -133,6 +134,7 @@ app.whenReady().then(() => {
     () => openSettingsWindow()
   );
   setPetWindowGetter(() => petWindow);
+  setProactivePetWindowGetter(() => petWindow);
   createPetWindow();
   createTray();
 
@@ -142,6 +144,9 @@ app.whenReady().then(() => {
     startBridge().catch(() => {});
   }
 
+  // 启动主动行为 (内部根据 cfg.dailyLetter / cfg.chatter 决定是否真发)
+  startProactive();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createPetWindow();
   });
@@ -149,6 +154,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   stopBridge();
+  stopProactive();
   closeMemory();
 });
 

@@ -5,6 +5,7 @@ import { buildSystemPrompt } from './personas-loader';
 import { chat as providerChat } from './providers';
 import { TOOL_DEFINITIONS, callTool } from './tools';
 import { appendEpisode, listFacts } from './memory/store';
+import { noteUserInteraction } from './proactive';
 import type { ChatMessage, ChatResponse } from '../shared/types';
 
 const recentWindow: ChatMessage[] = [];
@@ -87,6 +88,13 @@ export async function sendChat(userInput: string): Promise<ChatResponse> {
     }
   } catch {
     // 记忆持久化失败不影响主流程
+  }
+
+  // 用户刚交互过, 重排话痨计时器避免立即被搭话
+  try {
+    noteUserInteraction();
+  } catch {
+    /* ignore */
   }
 
   return lastResp ?? { text: '' };

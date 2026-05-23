@@ -90,7 +90,13 @@ const api = {
     ipcRenderer.invoke('mem:setFactStatus', id, status),
   memDeleteFact: (id: number): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('mem:deleteFact', id),
-  memListTasks: (limit: number): Promise<TaskRow[]> => ipcRenderer.invoke('mem:listTasks', limit)
+  memListTasks: (limit: number): Promise<TaskRow[]> => ipcRenderer.invoke('mem:listTasks', limit),
+
+  // 主动行为
+  triggerLetter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
+    ipcRenderer.invoke('proactive:triggerLetter'),
+  triggerChatter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
+    ipcRenderer.invoke('proactive:triggerChatter')
 };
 
 contextBridge.exposeInMainWorld('api', api);
