@@ -6,8 +6,17 @@ import ProfileSection from './sections/ProfileSection';
 import WindowSection from './sections/WindowSection';
 import SafetySection from './sections/SafetySection';
 import ClaudeCodeSection from './sections/ClaudeCodeSection';
+import MemorySection from './sections/MemorySection';
 
-type Tab = 'providers' | 'persona' | 'profile' | 'safety' | 'claudecode' | 'window' | 'about';
+type Tab =
+  | 'providers'
+  | 'persona'
+  | 'profile'
+  | 'memory'
+  | 'safety'
+  | 'claudecode'
+  | 'window'
+  | 'about';
 
 export default function Settings() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
@@ -33,6 +42,7 @@ export default function Settings() {
         <NavBtn active={tab === 'providers'} onClick={() => setTab('providers')}>API 提供商</NavBtn>
         <NavBtn active={tab === 'persona'} onClick={() => setTab('persona')}>人设</NavBtn>
         <NavBtn active={tab === 'profile'} onClick={() => setTab('profile')}>用户 Profile</NavBtn>
+        <NavBtn active={tab === 'memory'} onClick={() => setTab('memory')}>记忆</NavBtn>
         <NavBtn active={tab === 'safety'} onClick={() => setTab('safety')}>
           安全模式 {cfg.safetyMode === 'danger' ? '⚠' : ''}
         </NavBtn>
@@ -51,6 +61,7 @@ export default function Settings() {
           <PersonaSection cfg={cfg} personas={personas} onChange={refresh} />
         )}
         {tab === 'profile' && <ProfileSection cfg={cfg} onChange={refresh} />}
+        {tab === 'memory' && <MemorySection />}
         {tab === 'safety' && <SafetySection cfg={cfg} onChange={refresh} />}
         {tab === 'claudecode' && <ClaudeCodeSection cfg={cfg} onChange={refresh} />}
         {tab === 'window' && <WindowSection cfg={cfg} onChange={refresh} />}
@@ -91,10 +102,8 @@ function AboutSection() {
       <p className="muted">本工具仅供个人使用与小范围分享, 不分发任何 API key。</p>
       <h3 style={{ marginTop: 24 }}>即将上线</h3>
       <ul className="muted">
-        <li>五层记忆系统 (Profile / Recent / Episode / Facts / Task)</li>
         <li>每日来信 + 话痨模式</li>
         <li>GPT-SoVITS TTS 接入</li>
-        <li>Anthropic + Gemini Provider 适配</li>
         <li>全屏面板 + Live2D 立绘槽</li>
       </ul>
     </div>

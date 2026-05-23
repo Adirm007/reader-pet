@@ -16,7 +16,17 @@ import {
   isStopHookInstalled
 } from './claude-code-hook-installer';
 import { startBridge, stopBridge, isBridgeRunning } from './claude-code-bridge';
-import type { ProviderConfig, SafetyMode } from '../shared/types';
+import {
+  recentEpisodes,
+  searchEpisodes,
+  listFacts,
+  upsertFact,
+  setFactStatus,
+  deleteFact,
+  listTasks,
+  getMemoryStats
+} from './memory/store';
+import type { ProviderConfig, SafetyMode, FactStatus } from '../shared/types';
 
 export function registerIpc(
   getSettingsWindow: () => BrowserWindow | null,
@@ -87,4 +97,24 @@ export function registerIpc(
     return { ok: true };
   });
   ipcMain.handle('cc:isBridgeRunning', () => isBridgeRunning());
+
+  // 记忆系统
+  ipcMain.handle('mem:stats', () => getMemoryStats());
+  ipcMain.handle('mem:recentEpisodes', (_, limit: number, persona?: string) =>
+    recentEpisodes(limit, persona)
+  );
+  ipcMain.handle('mem:searchEpisodes', (_, q: string, limit: number) => searchEpisodes(q, limit));
+  ipcMain.handle('mem:listFacts', (_, status?: FactStatus, limit?: number) =>
+    listFacts({ status, limit })
+  );
+  ipcMain.handle('mem:upsertFact', (_, row: any) => upsertFact(row));
+  ipcMain.handle('mem:setFactStatus', (_, id: number, status: FactStatus) => {
+    setFactStatus(id, status);
+    return { ok: true };
+  });
+  ipcMain.handle('mem:deleteFact', (_, id: number) => {
+    deleteFact(id);
+    return { ok: true };
+  });
+  ipcMain.handle('mem:listTasks', (_, limit: number) => listTasks(limit));
 }

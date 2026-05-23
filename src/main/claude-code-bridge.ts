@@ -10,6 +10,7 @@ import { BrowserWindow } from 'electron';
 import { getConfig, getActiveProvider } from './config';
 import { buildSystemPrompt } from './personas-loader';
 import { chat as providerChat } from './providers';
+import { appendTask } from './memory/store';
 import type { TaskReport, ChatMessage } from '../shared/types';
 
 let server: Server | null = null;
@@ -113,6 +114,19 @@ async function handleStopHook(payload: StopHookPayload) {
     report.summary = body.slice(0, 400) || '(任务完成, 但 transcript 为空)';
   }
   pushToPet(report.summary ?? '(任务完成)');
+
+  // 持久化到 Layer 5 task log
+  try {
+    appendTask({
+      ts: report.receivedAt,
+      session_id: report.session_id,
+      transcript_path: report.transcript_path,
+      summary: report.summary,
+      raw_json: JSON.stringify(report.raw)
+    });
+  } catch {
+    /* ignore */
+  }
   return report;
 }
 

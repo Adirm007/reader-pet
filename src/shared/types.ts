@@ -137,3 +137,46 @@ export interface TaskReport {
   summary?: string;                 // 主进程从 transcript 提取
   raw: any;
 }
+
+// ============ 记忆系统 ============
+// Layer 3: Episode log
+export interface EpisodeRow {
+  id: number;
+  ts: number;
+  role: 'user' | 'assistant';
+  content: string;
+  persona_id: string;
+  session_id?: string;
+}
+
+// Layer 4: Semantic facts
+export type FactStatus = 'active' | 'superseded' | 'retracted';
+export interface FactRow {
+  id: number;
+  predicate: string;       // 例如 "favorite_color" / "current_project" / "preferred_name"
+  subject: string;         // 通常是 "user" 或某实体
+  object: string;          // 实际值
+  confidence: number;      // 0~1
+  status: FactStatus;
+  created_at: number;
+  superseded_by?: number;
+  source_episode_id?: number;
+}
+
+// Layer 5: Task log
+export interface TaskRow {
+  id: number;
+  ts: number;
+  session_id?: string;
+  transcript_path?: string;
+  summary?: string;
+  raw_json: string;
+}
+
+export interface MemoryStats {
+  episodes: number;
+  facts: number;
+  activeFacts: number;
+  tasks: number;
+  dbPath: string;
+}

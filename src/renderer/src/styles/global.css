@@ -575,3 +575,33 @@ button:disabled {
   color: #c2453f;
 }
 
+/* Episode 列表 */
+.ep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ep-row {
+  background: #fff;
+  border: 1px solid #e2dfee;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.ep-row.ep-user {
+  border-left: 3px solid #5d4ec0;
+}
+.ep-row.ep-assistant {
+  border-left: 3px solid #d8a86b;
+}
+.ep-meta {
+  font-size: 11px;
+  color: #7a7889;
+  margin-bottom: 4px;
+}
+.ep-content {
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}
+

@@ -4,9 +4,14 @@ import type {
   AppConfig,
   CapabilityDescriptor,
   ChatResponse,
+  EpisodeRow,
+  FactRow,
+  FactStatus,
+  MemoryStats,
   PersonaMeta,
   ProviderConfig,
-  SafetyMode
+  SafetyMode,
+  TaskRow
 } from '../shared/types';
 
 const api = {
@@ -64,7 +69,28 @@ const api = {
     const listener = (_: unknown, payload: any) => cb(payload);
     ipcRenderer.on('pet:bubble', listener);
     return () => ipcRenderer.off('pet:bubble', listener);
-  }
+  },
+
+  // 记忆系统
+  memStats: (): Promise<MemoryStats> => ipcRenderer.invoke('mem:stats'),
+  memRecentEpisodes: (limit: number, persona?: string): Promise<EpisodeRow[]> =>
+    ipcRenderer.invoke('mem:recentEpisodes', limit, persona),
+  memSearchEpisodes: (q: string, limit: number): Promise<EpisodeRow[]> =>
+    ipcRenderer.invoke('mem:searchEpisodes', q, limit),
+  memListFacts: (status?: FactStatus, limit?: number): Promise<FactRow[]> =>
+    ipcRenderer.invoke('mem:listFacts', status, limit),
+  memUpsertFact: (row: {
+    predicate: string;
+    subject: string;
+    object: string;
+    confidence?: number;
+  }): Promise<{ id: number; supersededId?: number }> =>
+    ipcRenderer.invoke('mem:upsertFact', row),
+  memSetFactStatus: (id: number, status: FactStatus): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('mem:setFactStatus', id, status),
+  memDeleteFact: (id: number): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('mem:deleteFact', id),
+  memListTasks: (limit: number): Promise<TaskRow[]> => ipcRenderer.invoke('mem:listTasks', limit)
 };
 
 contextBridge.exposeInMainWorld('api', api);

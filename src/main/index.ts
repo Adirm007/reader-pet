@@ -4,6 +4,7 @@ import { join } from 'path';
 import { registerIpc } from './ipc';
 import { getConfig } from './config';
 import { setPetWindowGetter, startBridge, stopBridge } from './claude-code-bridge';
+import { closeMemory } from './memory/store';
 
 let petWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -148,6 +149,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   stopBridge();
+  closeMemory();
 });
 
 // 桌宠常驻 — 不监听 window-all-closed

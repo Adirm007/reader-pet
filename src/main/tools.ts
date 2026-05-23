@@ -8,6 +8,12 @@ import { browserGoto } from './capabilities/browser';
 import { listProcesses } from './capabilities/memory-rw';
 import { spawn } from 'child_process';
 import { getConfig } from './config';
+import {
+  searchEpisodes,
+  upsertFact,
+  listFacts,
+  setFactStatus
+} from './memory/store';
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -129,6 +135,63 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         required: ['task']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall_episodes',
+      description:
+        '在过往对话历史中按关键词检索 (FTS5). 仅当作家先生/作家小姐主动让你"想想看 / 你之前说过吗"时再用, 平时不要动.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'number', description: '默认 10' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remember_fact',
+      description:
+        '把一条关于作家的稳定事实记下来 (例如 偏好的称呼 / 在写的作品 / 不喜欢的措辞). 同 predicate+subject 已有事实会被自动 supersede.',
+      parameters: {
+        type: 'object',
+        properties: {
+          predicate: { type: 'string', description: '事实键, 例如 favorite_color / current_project' },
+          subject: { type: 'string', description: '默认 "user"' },
+          object: { type: 'string', description: '事实值' },
+          confidence: { type: 'number' }
+        },
+        required: ['predicate', 'object']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'forget_fact',
+      description: '把某条事实标记为 retracted (软删).',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'number' } },
+        required: ['id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_active_facts',
+      description: '列出当前所有 active 事实 (供对话中需要时参考). 默认上限 50.',
+      parameters: {
+        type: 'object',
+        properties: { limit: { type: 'number' } }
+      }
+    }
   }
 ];
 
@@ -200,6 +263,45 @@ export async function callTool(name: string, argsJson: string): Promise<string> 
       }
       case 'dispatch_claude_code_task': {
         return JSON.stringify(dispatchClaudeCode(args.task, args.cwd));
+      }
+      case 'recall_episodes': {
+        const rows = searchEpisodes(args.query, args.limit ?? 10);
+        return JSON.stringify({
+          ok: true,
+          hits: rows.map((r) => ({
+            id: r.id,
+            ts: r.ts,
+            role: r.role,
+            persona: r.persona_id,
+            content: r.content.slice(0, 800)
+          }))
+        });
+      }
+      case 'remember_fact': {
+        const r = upsertFact({
+          predicate: args.predicate,
+          subject: args.subject ?? 'user',
+          object: args.object,
+          confidence: args.confidence
+        });
+        return JSON.stringify({ ok: true, ...r });
+      }
+      case 'forget_fact': {
+        setFactStatus(args.id, 'retracted');
+        return JSON.stringify({ ok: true });
+      }
+      case 'list_active_facts': {
+        const facts = listFacts({ status: 'active', limit: args.limit ?? 50 });
+        return JSON.stringify({
+          ok: true,
+          facts: facts.map((f) => ({
+            id: f.id,
+            predicate: f.predicate,
+            subject: f.subject,
+            object: f.object,
+            confidence: f.confidence
+          }))
+        });
       }
       default:
         return JSON.stringify({ error: `unknown tool: ${name}` });

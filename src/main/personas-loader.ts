@@ -85,7 +85,8 @@ export function getPersonaList(): PersonaMeta[] {
  */
 export function buildSystemPrompt(
   personaId: string,
-  profile: { preferredAddress: string; selfDescription?: string; customFacts: string[] }
+  profile: { preferredAddress: string; selfDescription?: string; customFacts: string[] },
+  extraFacts: { predicate: string; object: string }[] = []
 ): { segmentA: string; segmentB: string; segmentC: string; combined: string } {
   const data = loadPersonas();
   const persona = data.personas[personaId];
@@ -143,6 +144,9 @@ export function buildSystemPrompt(
   const factsBlock = profile.customFacts.length
     ? profile.customFacts.map((s, i) => `${i + 1}. ${s}`).join('\n')
     : '(尚无)';
+  const memFactsBlock = extraFacts.length
+    ? extraFacts.map((f) => `- ${f.predicate}: ${f.object}`).join('\n')
+    : '';
   const segmentC = [
     `# 当前用户 Profile`,
     `- 你应当如此称呼用户: 「${profile.preferredAddress}」`,
@@ -150,6 +154,7 @@ export function buildSystemPrompt(
     ``,
     `## 用户告诉过你/你已记下的事实`,
     factsBlock,
+    memFactsBlock ? `\n## 已沉淀的语义事实 (来自记忆库)\n${memFactsBlock}` : '',
     ``,
     `# 当前响应要求`,
     `- 默认中文回复, 简短自然, 一两句即可, 除非用户明确要求长答`,

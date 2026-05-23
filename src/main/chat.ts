@@ -4,6 +4,7 @@ import { getConfig, getActiveProvider } from './config';
 import { buildSystemPrompt } from './personas-loader';
 import { chat as providerChat } from './providers';
 import { TOOL_DEFINITIONS, callTool } from './tools';
+import { appendEpisode, listFacts } from './memory/store';
 import type { ChatMessage, ChatResponse } from '../shared/types';
 
 const recentWindow: ChatMessage[] = [];
@@ -21,7 +22,17 @@ export async function sendChat(userInput: string): Promise<ChatResponse> {
     throw new Error('尚未配置 API provider, 请先到设置面板添加并选定一个 provider');
   }
   const cfg = getConfig();
-  const prompt = buildSystemPrompt(cfg.activePersonaId, cfg.profile);
+  // 拉取一份 active 语义事实 (默认上限 30 条, 极小 token 增量)
+  let memFacts: { predicate: string; object: string }[] = [];
+  try {
+    memFacts = listFacts({ status: 'active', limit: 30 }).map((f) => ({
+      predicate: f.predicate,
+      object: f.object
+    }));
+  } catch {
+    memFacts = [];
+  }
+  const prompt = buildSystemPrompt(cfg.activePersonaId, cfg.profile, memFacts);
 
   const working: ChatMessage[] = [
     { role: 'system', content: prompt.combined },
@@ -65,6 +76,18 @@ export async function sendChat(userInput: string): Promise<ChatResponse> {
   const finalText = lastResp?.text ?? '';
   pushRecent({ role: 'user', content: userInput });
   pushRecent({ role: 'assistant', content: finalText });
+
+  // 持久化到 Episode log (Layer 3)
+  try {
+    const persona = cfg.activePersonaId;
+    const now = Date.now();
+    appendEpisode({ ts: now, role: 'user', content: userInput, persona_id: persona });
+    if (finalText) {
+      appendEpisode({ ts: now + 1, role: 'assistant', content: finalText, persona_id: persona });
+    }
+  } catch {
+    // 记忆持久化失败不影响主流程
+  }
 
   return lastResp ?? { text: '' };
 }
