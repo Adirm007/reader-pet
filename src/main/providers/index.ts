@@ -1,16 +1,17 @@
-// Provider 工厂 — 当前仅实现 OpenAI 兼容
-// 后续 anthropic / gemini 在此 dispatch
+// Provider 工厂 — 三种类型分发: openai-compatible / anthropic / gemini
 import type { ProviderConfig, ChatRequest, ChatResponse } from '../../shared/types';
 import { chatOpenAICompatible, listModelsOpenAICompatible } from './openai-compatible';
+import { chatAnthropic, listModelsAnthropic } from './anthropic';
+import { chatGemini, listModelsGemini } from './gemini';
 
 export async function chat(cfg: ProviderConfig, req: ChatRequest): Promise<ChatResponse> {
   switch (cfg.type) {
     case 'openai-compatible':
       return chatOpenAICompatible(cfg, req);
     case 'anthropic':
-      throw new Error('Anthropic provider 暂未实现, 下一阶段添加');
+      return chatAnthropic(cfg, req);
     case 'gemini':
-      throw new Error('Gemini provider 暂未实现, 下一阶段添加');
+      return chatGemini(cfg, req);
     default:
       throw new Error(`未知 provider type: ${(cfg as ProviderConfig).type}`);
   }
@@ -20,6 +21,10 @@ export async function listModels(cfg: ProviderConfig): Promise<string[] | null> 
   switch (cfg.type) {
     case 'openai-compatible':
       return listModelsOpenAICompatible(cfg);
+    case 'anthropic':
+      return listModelsAnthropic(cfg);
+    case 'gemini':
+      return listModelsGemini(cfg);
     default:
       return null;
   }

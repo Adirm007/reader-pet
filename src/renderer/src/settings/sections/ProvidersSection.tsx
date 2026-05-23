@@ -4,14 +4,20 @@ import type { AppConfig, ProviderConfig, ProviderType } from '../../../../shared
 
 const TYPE_LABELS: Record<ProviderType, string> = {
   'openai-compatible': 'OpenAI 兼容 (GPT/DeepSeek/Qwen/Moonshot/Ollama/反代)',
-  anthropic: 'Anthropic Claude (待实现)',
-  gemini: 'Google Gemini (待实现)'
+  anthropic: 'Anthropic Claude (官方或反代)',
+  gemini: 'Google Gemini (官方或反代)'
 };
 
 const DEFAULT_URLS: Record<ProviderType, string> = {
   'openai-compatible': 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com',
   gemini: 'https://generativelanguage.googleapis.com'
+};
+
+const MODEL_PLACEHOLDER: Record<ProviderType, string> = {
+  'openai-compatible': '例如: gpt-4o-mini / deepseek-chat / qwen-max',
+  anthropic: '例如: claude-sonnet-4-6 / claude-opus-4-7 / claude-haiku-4-5-20251001',
+  gemini: '例如: gemini-2.0-flash / gemini-2.5-pro'
 };
 
 export default function ProvidersSection({
@@ -103,8 +109,8 @@ export default function ProvidersSection({
     <div className="section">
       <h2>API 提供商</h2>
       <p className="muted">
-        所有 API key 仅保存在本地配置文件。可填官方地址或任何反代地址。第一批仅 OpenAI 兼容协议;
-        Anthropic / Gemini 在后续阶段加入。
+        所有 API key 仅保存在本地配置文件。可填官方地址或任何反代地址。支持 OpenAI 兼容协议、
+        Anthropic Messages API、Google Gemini 三种.
       </p>
 
       <div className="provider-list">
@@ -186,7 +192,7 @@ export default function ProvidersSection({
             <input
               value={editing.model}
               onChange={(e) => setEditing({ ...editing, model: e.target.value })}
-              placeholder="例如: gpt-4o-mini / deepseek-chat / qwen-max"
+              placeholder={MODEL_PLACEHOLDER[editing.type]}
             />
           </label>
           <div className="form-actions">
