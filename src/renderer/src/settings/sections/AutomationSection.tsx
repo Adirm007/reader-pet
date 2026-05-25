@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AppConfig, CapabilityRuntimeStatus, CapabilityStatus, McpServerConfig } from '../../../../shared/types';
 
 type ToolMap = Record<string, string[]>;
+type McpDiscoveryMap = Record<string, { resources?: string[]; prompts?: string[] }>;
 
 function linesToArgs(value: string): string[] {
   return value.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -16,9 +17,12 @@ function newServer(): McpServerConfig {
   return {
     id,
     displayName: '新 MCP Server',
+    transport: 'stdio',
     command: '',
     args: [],
     cwd: '',
+    url: '',
+    headers: {},
     enabled: false,
     riskLevel: 'high',
     allowedTools: [],
@@ -39,6 +43,11 @@ export default function AutomationSection({
   const [runtime, setRuntime] = useState<Record<string, CapabilityRuntimeStatus>>({});
   const [browserTools, setBrowserTools] = useState<string[]>([]);
   const [mcpTools, setMcpTools] = useState<ToolMap>({});
+  const [mcpDiscovery, setMcpDiscovery] = useState<McpDiscoveryMap>({});
+  const [cliSample, setCliSample] = useState('{"ping":"pong"}');
+  const [maaTask, setMaaTask] = useState(cfg.automation.maaDefaultTask ?? '');
+  const [maaProfile, setMaaProfile] = useState('');
+  const [desktopQueueJson, setDesktopQueueJson] = useState('[\n  { "type": "wait", "ms": 1000 }\n]');
   const [msg, setMsg] = useState('');
 
   const isDanger = cfg.safetyMode === 'danger';
@@ -115,6 +124,65 @@ export default function AutomationSection({
     }
   };
 
+  const listMcpResourcesAndPrompts = async (server: McpServerConfig) => {
+    try {
+      const [resources, prompts] = await Promise.all([
+        window.api.listMcpResources(server.id),
+        window.api.listMcpPrompts(server.id)
+      ]);
+      setMcpDiscovery((current) => ({
+        ...current,
+        [server.id]: {
+          resources: resources.map((item: any) => String(item.uri ?? item.name ?? JSON.stringify(item))).filter(Boolean),
+          prompts: prompts.map((item: any) => String(item.name ?? item.id ?? JSON.stringify(item))).filter(Boolean)
+        }
+      }));
+      setMsg(`MCP resources/prompts 已刷新: ${server.displayName || server.id}`);
+      await refreshStatus();
+    } catch (e: any) {
+      setMsg(`MCP resources/prompts 诊断失败: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const runMaaSample = async () => {
+    try {
+      const result = await window.api.maaRunTask({ task: maaTask.trim() || undefined, profile: maaProfile.trim() || undefined, timeoutMs: 120000 });
+      setMsg(`MAA 试运行结果: ${JSON.stringify(result, null, 2)}`);
+      await refreshStatus();
+    } catch (e: any) {
+      setMsg(`MAA 试运行失败: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const stopAllCapabilities = async () => {
+    const result = await window.api.emergencyStop();
+    setMsg(`已请求停止: ${JSON.stringify(result, null, 2)}`);
+    await refreshStatus();
+  };
+
+  const runDesktopQueue = async (dryRun: boolean) => {
+    try {
+      const actions = JSON.parse(desktopQueueJson);
+      const result = await window.api.desktopRunQueue({ actions, dryRun, description: 'settings-test' });
+      setMsg(`桌面自动化${dryRun ? ' dry-run' : ' run'} 结果: ${JSON.stringify(result, null, 2)}`);
+      await refreshStatus();
+    } catch (e: any) {
+      setMsg(`桌面自动化执行失败: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  const runCliAnythingSample = async () => {
+    try {
+      const parsed = cliSample.trim() ? JSON.parse(cliSample) : {};
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('样例 input 必须是 JSON object');
+      const result = await window.api.cliAnythingRun({ input: parsed as Record<string, unknown>, timeoutMs: 5000 });
+      setMsg(`CLI-Anything 试运行结果: ${JSON.stringify(result, null, 2)}`);
+      await refreshStatus();
+    } catch (e: any) {
+      setMsg(`CLI-Anything 试运行失败: ${e?.message ?? String(e)}`);
+    }
+  };
+
   const runningSummary = useMemo(() => {
     const running = Object.values(runtime).filter((item) => item.running);
     return running.length ? running.map((item) => `${item.id}${item.detail ? `(${item.detail})` : ''}`).join(', ') : '无运行中能力';
@@ -181,6 +249,13 @@ export default function AutomationSection({
               <input value={server.displayName} onChange={(e) => updateServer(index, { displayName: e.target.value })} />
             </label>
             <label>
+              transport
+              <select value={server.transport ?? 'stdio'} onChange={(e) => updateServer(index, { transport: e.target.value as McpServerConfig['transport'] })}>
+                <option value="stdio">stdio</option>
+                <option value="http">http</option>
+              </select>
+            </label>
+            <label>
               command
               <input value={server.command} onChange={(e) => updateServer(index, { command: e.target.value })} />
             </label>
@@ -191,6 +266,25 @@ export default function AutomationSection({
             <label>
               cwd
               <input value={server.cwd ?? ''} onChange={(e) => updateServer(index, { cwd: e.target.value })} />
+            </label>
+            <label>
+              http url
+              <input value={server.url ?? ''} onChange={(e) => updateServer(index, { url: e.target.value })} />
+            </label>
+            <label>
+              http headers JSON
+              <textarea
+                value={JSON.stringify(server.headers ?? {}, null, 2)}
+                rows={3}
+                onChange={(e) => {
+                  try {
+                    const parsed = e.target.value.trim() ? JSON.parse(e.target.value) : {};
+                    updateServer(index, { headers: parsed });
+                  } catch {
+                    setMsg('headers 必须是 JSON object');
+                  }
+                }}
+              />
             </label>
             <label>
               riskLevel
@@ -210,6 +304,7 @@ export default function AutomationSection({
             </label>
             <div className="form-actions">
               <button onClick={() => listMcpTools(server)}>列出 tools</button>
+              <button onClick={() => listMcpResourcesAndPrompts(server)}>列 resources/prompts</button>
               <button onClick={() => setServers((items) => items.filter((_, i) => i !== index))}>删除</button>
             </div>
             {mcpTools[server.id]?.length > 0 && (
@@ -226,6 +321,8 @@ export default function AutomationSection({
                 ))}
               </div>
             )}
+            {mcpDiscovery[server.id]?.resources?.length ? <ToolList tools={mcpDiscovery[server.id].resources ?? []} /> : null}
+            {mcpDiscovery[server.id]?.prompts?.length ? <ToolList tools={mcpDiscovery[server.id].prompts ?? []} /> : null}
           </div>
         ))}
         <div className="form-actions">
@@ -243,24 +340,70 @@ export default function AutomationSection({
           working dir
           <input value={automation.maaWorkingDir} onChange={(e) => setAutomation({ ...automation, maaWorkingDir: e.target.value })} />
         </label>
-        <button className="primary" onClick={saveAutomation}>保存 MAA 配置</button>
+        <label>
+          assets dir
+          <input value={automation.maaAssetsDir ?? ''} onChange={(e) => setAutomation({ ...automation, maaAssetsDir: e.target.value })} />
+        </label>
+        <label>
+          task config path
+          <input value={automation.maaTaskConfigPath ?? ''} onChange={(e) => setAutomation({ ...automation, maaTaskConfigPath: e.target.value })} />
+        </label>
+        <label>
+          default task
+          <input value={automation.maaDefaultTask ?? ''} onChange={(e) => {
+            setAutomation({ ...automation, maaDefaultTask: e.target.value });
+            setMaaTask(e.target.value);
+          }} />
+        </label>
+        <label>
+          extra args（每行一个参数）
+          <textarea value={argsToLines(automation.maaExtraArgs)} rows={3} onChange={(e) => setAutomation({ ...automation, maaExtraArgs: linesToArgs(e.target.value) })} />
+        </label>
+        <label>
+          试运行 task（留空使用 default task）
+          <input value={maaTask} onChange={(e) => setMaaTask(e.target.value)} />
+        </label>
+        <label>
+          试运行 profile（可选）
+          <input value={maaProfile} onChange={(e) => setMaaProfile(e.target.value)} />
+        </label>
+        <div className="form-actions">
+          <button className="primary" onClick={saveAutomation}>保存 MAA 配置</button>
+          <button onClick={runMaaSample}>试运行</button>
+          <button onClick={stopAllCapabilities}>停止运行中能力</button>
+        </div>
       </CapabilityBlock>
 
       <CapabilityBlock title="CLI-Anything" status={statusText('cli_anything')} runtime={runtimeText('cli_anything')} enabled={cfg.capabilities.cliAnythingEnabled} isDanger={isDanger}>
-        <p className="muted" style={{ fontSize: 12 }}>当前约定：stdin 接收 JSON，stdout 尽量返回 JSON；第一阶段不固定完整协议。</p>
+        <p className="muted" style={{ fontSize: 12 }}>v1 协议：stdin 接收 {'{ version: 1, input, schema }'}，stdout 返回 JSON object；复杂长期插件优先用 MCP。</p>
         <label>
           command
           <input value={automation.cliAnythingCommand} onChange={(e) => setAutomation({ ...automation, cliAnythingCommand: e.target.value })} />
         </label>
         <label>
+          args（每行一个参数）
+          <textarea
+            value={argsToLines(automation.cliAnythingArgs)}
+            onChange={(e) => setAutomation({ ...automation, cliAnythingArgs: linesToArgs(e.target.value) })}
+            rows={3}
+          />
+        </label>
+        <label>
           working dir
           <input value={automation.cliAnythingWorkingDir} onChange={(e) => setAutomation({ ...automation, cliAnythingWorkingDir: e.target.value })} />
         </label>
-        <button className="primary" onClick={saveAutomation}>保存 CLI-Anything 配置</button>
+        <label>
+          试运行 input JSON
+          <textarea value={cliSample} onChange={(e) => setCliSample(e.target.value)} rows={3} />
+        </label>
+        <div className="form-actions">
+          <button className="primary" onClick={saveAutomation}>保存 CLI-Anything 配置</button>
+          <button onClick={runCliAnythingSample}>试运行</button>
+        </div>
       </CapabilityBlock>
 
       <CapabilityBlock title="桌面自动化" status={statusText('desktop_automation')} runtime={runtimeText('desktop_automation')} enabled={cfg.capabilities.desktopAutomationEnabled} isDanger={isDanger}>
-        <p className="muted" style={{ fontSize: 12 }}>第一阶段只保存 provider 选择；鼠标键盘动作队列尚未实现。</p>
+        <p className="muted" style={{ fontSize: 12 }}>动作队列支持 click/typeText/hotkey/wait；真实 run 会操作当前桌面。</p>
         <label>
           provider
           <select
@@ -272,7 +415,16 @@ export default function AutomationSection({
             <option value="nutjs">nutjs</option>
           </select>
         </label>
-        <button className="primary" onClick={saveAutomation}>保存桌面自动化配置</button>
+        <label>
+          actions JSON
+          <textarea value={desktopQueueJson} onChange={(e) => setDesktopQueueJson(e.target.value)} rows={7} />
+        </label>
+        <div className="form-actions">
+          <button className="primary" onClick={saveAutomation}>保存桌面自动化配置</button>
+          <button onClick={() => runDesktopQueue(true)}>dry-run</button>
+          <button onClick={() => runDesktopQueue(false)}>run</button>
+          <button onClick={stopAllCapabilities}>停止运行中能力</button>
+        </div>
       </CapabilityBlock>
 
       {msg && <div className="test-msg">{msg}</div>}

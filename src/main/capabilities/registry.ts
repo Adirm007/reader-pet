@@ -3,9 +3,38 @@ import { fileRead, fileWrite, fileList, fileStat } from './files';
 import { shellExec } from './shell';
 import { getScreenObservationRuntimeStatus, listScreenSources, observeScreenSequence, screenCapture, stopScreenObservation } from './screen';
 import { browserGoto, isPlaywrightInstalled } from './browser';
-import { callBrowserMcpTool, getBrowserMcpRuntimeStatus, listBrowserMcpTools, stopBrowserMcp } from './playwright-mcp';
+import {
+  browserMcpClick,
+  browserMcpDownload,
+  browserMcpFileUpload,
+  browserMcpFillForm,
+  browserMcpPressKey,
+  browserMcpSelectOption,
+  browserMcpSetChecked,
+  browserMcpSnapshot,
+  browserMcpSubmitForm,
+  browserMcpTabs,
+  browserMcpTakeScreenshot,
+  browserMcpType,
+  browserMcpWaitFor,
+  callBrowserMcpTool,
+  getBrowserMcpRuntimeStatus,
+  listBrowserMcpTools,
+  stopBrowserMcp
+} from './playwright-mcp';
 import { getMemoryScanRuntimeStatus, listProcesses, isMemoryRWInstalled, readMemory, scanMemory, stopMemoryScan, writeMemory } from './memory-rw';
-import { callMcpTool, getMcpRuntimeStatus, getMcpStatus, listMcpServers, listMcpTools, stopMcpServers } from './mcp';
+import {
+  callMcpTool,
+  getMcpPrompt,
+  getMcpRuntimeStatus,
+  getMcpStatus,
+  listMcpPrompts,
+  listMcpResources,
+  listMcpServers,
+  listMcpTools,
+  readMcpResource,
+  stopMcpServers
+} from './mcp';
 import { getMaaRuntimeStatus, getMaaStatus, runMaaTask, stopMaa } from './maa';
 import { getCliAnythingRuntimeStatus, getCliAnythingStatus, runCliAnything, stopCliAnything } from './cli-anything';
 import {
@@ -15,6 +44,7 @@ import {
   desktopTypeText,
   getDesktopAutomationRuntimeStatus,
   getDesktopAutomationStatus,
+  runDesktopAutomationQueue,
   stopDesktopAutomation
 } from './desktop-automation';
 import { spawn } from 'child_process';
@@ -340,6 +370,263 @@ const adapters: CapabilityAdapter[] = [
         definition: {
           type: 'function',
           function: {
+            name: 'browser_snapshot',
+            description: '读取当前网页的可访问性快照/正文摘要; 建议在 click/type 前先调用以获取元素 ref. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: { max_chars: { type: 'number', description: '返回文本最大长度, 默认 12000, 最大 30000' } }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpSnapshot(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_click',
+            description:
+              '点击页面元素, 可能提交表单或触发删除/支付/发送等站点动作; 高风险网页动作必须先得到用户明确授权. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: 'Playwright MCP snapshot 中的元素 ref, 优先使用' },
+                text: { type: 'string', description: '可见文本、按钮名或链接名; 无 ref 时作为辅助' },
+                button: { type: 'string', enum: ['left', 'right', 'middle'], description: '默认 left' },
+                double_click: { type: 'boolean', description: '是否双击, 默认 false' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpClick(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_type',
+            description:
+              '向页面元素输入短文本; 不要输入密码、token、银行卡、身份证等敏感内容, 除非用户当前明确授权. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: 'Playwright MCP snapshot 中的输入元素 ref, 优先使用' },
+                element: { type: 'string', description: '输入元素的可读名称; 无 ref 时作为辅助' },
+                text: { type: 'string', description: '要输入的文本, 最大 2000 字符' },
+                submit: { type: 'boolean', description: '输入后是否提交/按 Enter, 默认 false' }
+              },
+              required: ['text']
+            }
+          }
+        },
+        invoke: async (args) => browserMcpType(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_fill_form',
+            description:
+              '一次填写多个表单字段; 会改写网页状态, 不会自动提交. 不要填写密码、token、银行卡、身份证等敏感内容, 除非用户当前明确授权. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fields: {
+                  type: 'array',
+                  maxItems: 20,
+                  items: {
+                    type: 'object',
+                    properties: {
+                      ref: { type: 'string', description: 'Playwright MCP snapshot 中的字段 ref, 优先使用' },
+                      element: { type: 'string', description: '字段可读名称; 无 ref 时作为辅助' },
+                      text: { type: 'string', description: '要填写的文本; 可为空字符串以清空字段' }
+                    },
+                    required: ['text']
+                  }
+                }
+              },
+              required: ['fields']
+            }
+          }
+        },
+        invoke: async (args) => browserMcpFillForm(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_select_option',
+            description: '选择网页 select/dropdown 选项; 会改写表单状态. value/label/index 三选一. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: 'Playwright MCP snapshot 中的元素 ref, 优先使用' },
+                element: { type: 'string', description: '控件可读名称; 无 ref 时作为辅助' },
+                value: { type: 'string', description: '按 option value 选择' },
+                label: { type: 'string', description: '按可见标签选择' },
+                index: { type: 'number', description: '按选项序号选择' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpSelectOption(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_set_checked',
+            description:
+              '把 checkbox/radio 设置为指定状态, 不用盲点切换; 会改写表单或账号设置状态. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: 'Playwright MCP snapshot 中的元素 ref, 优先使用' },
+                element: { type: 'string', description: '控件可读名称; 无 ref 时作为辅助' },
+                checked: { type: 'boolean', description: '目标状态, 默认 true' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpSetChecked(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_file_upload',
+            description:
+              '通过网页文件输入上传本地文件路径; 可能把本机文件内容暴露给当前网站. 仅上传用户明确授权的文件. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: 'Playwright MCP snapshot 中的文件输入 ref' },
+                element: { type: 'string', description: '文件输入可读名称; 无 ref 时作为辅助' },
+                paths: {
+                  type: 'array',
+                  maxItems: 5,
+                  items: { type: 'string' },
+                  description: '要上传的本机绝对路径列表'
+                }
+              },
+              required: ['paths']
+            }
+          }
+        },
+        invoke: async (args) => browserMcpFileUpload(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_submit_form',
+            description:
+              "显式提交表单; 可能发送消息、登录、下单、付款、删除或修改账号设置. 高风险动作必须先得到用户明确授权, 且 confirmPhrase 必须为 'SUBMIT'. 仅限危险模式 + 已启用.",
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: '提交按钮或输入框 ref' },
+                element: { type: 'string', description: '目标元素可读名称' },
+                text: { type: 'string', description: '提交按钮可见文本' },
+                method: { type: 'string', enum: ['click', 'enter'], description: '默认 click' },
+                confirmPhrase: { type: 'string', description: "必须为 'SUBMIT'" }
+              },
+              required: ['confirmPhrase']
+            }
+          }
+        },
+        invoke: async (args) => browserMcpSubmitForm(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_press_key',
+            description: '发送有限白名单浏览器按键, 不开放关闭窗口/改地址栏等高风险快捷键. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: { key: { type: 'string', description: '例如 Enter, Escape, Tab, ArrowDown, Control+A' } },
+              required: ['key']
+            }
+          }
+        },
+        invoke: async (args) => browserMcpPressKey(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_wait_for',
+            description: '有限等待文本出现/消失或短暂稳定; 最大 30 秒. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                text: { type: 'string', description: '要等待出现或消失的文本' },
+                state: { type: 'string', enum: ['visible', 'hidden', 'stable'], description: '默认 visible; stable 表示短暂等待页面稳定' },
+                timeout_ms: { type: 'number', description: '默认 5000, 最大 30000' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpWaitFor(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_take_screenshot',
+            description: '获取当前页面截图诊断信息, 可能包含隐私; 不会把大体积 base64 原样返回. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: { full_page: { type: 'boolean', description: '是否截取整页, 默认 false' } }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpTakeScreenshot(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_download',
+            description:
+              '调用 Playwright MCP 下载工具等待或保存下载; 可能写入/覆盖本机文件, 下载内容可能有恶意风险. 不伪造 click+wait, MCP 缺少下载工具时会报错. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string', description: '触发下载的元素 ref, MCP server 支持时使用' },
+                text: { type: 'string', description: '触发下载的可见文本, MCP server 支持时使用' },
+                timeout_ms: { type: 'number', description: '默认 30000, 最大 120000' },
+                save_as: { type: 'string', description: '可选本机绝对保存路径' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpDownload(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_tabs',
+            description:
+              '管理浏览器标签页 list/new/select/close; close 可能丢失未保存内容, select 后快照/截图可能暴露私密页面. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['list', 'new', 'select', 'close'], description: '默认 list' },
+                index: { type: 'number', description: 'select/close 需要的 tab 序号' },
+                url: { type: 'string', description: 'new 时可选打开的 http/https URL' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => browserMcpTabs(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
             name: 'browser_mcp_list_tools',
             description: '列出 Playwright MCP 暴露的浏览器工具. 仅限危险模式 + 已启用.',
             parameters: { type: 'object', properties: {} }
@@ -527,6 +814,66 @@ const adapters: CapabilityAdapter[] = [
           }
         },
         invoke: async (args) => ({ ok: true, result: await callMcpTool(args.server_id, args.tool_name, args.args ?? {}) })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_list_resources',
+            description: '列出指定 MCP server 的 resources.',
+            parameters: {
+              type: 'object',
+              properties: { server_id: { type: 'string' } },
+              required: ['server_id']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, resources: await listMcpResources(args.server_id) })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_read_resource',
+            description: '读取指定 MCP resource.',
+            parameters: {
+              type: 'object',
+              properties: { server_id: { type: 'string' }, uri: { type: 'string' } },
+              required: ['server_id', 'uri']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, result: await readMcpResource(args.server_id, args.uri) })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_list_prompts',
+            description: '列出指定 MCP server 的 prompts.',
+            parameters: {
+              type: 'object',
+              properties: { server_id: { type: 'string' } },
+              required: ['server_id']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, prompts: await listMcpPrompts(args.server_id) })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_get_prompt',
+            description: '获取指定 MCP prompt.',
+            parameters: {
+              type: 'object',
+              properties: { server_id: { type: 'string' }, name: { type: 'string' }, args: { type: 'object' } },
+              required: ['server_id', 'name']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, result: await getMcpPrompt(args.server_id, args.name, args.args ?? {}) })
       }
     ],
     getStatus: getMcpStatus,
@@ -566,6 +913,7 @@ const adapters: CapabilityAdapter[] = [
         invoke: (args) => runMaaTask(args)
       }
     ],
+    directActions: [{ name: 'maa.runTask', invoke: ([args]) => runMaaTask(args) }],
     getStatus: getMaaStatus,
     getRuntimeStatus: getMaaRuntimeStatus,
     stop: () => stopMaa()
@@ -602,6 +950,7 @@ const adapters: CapabilityAdapter[] = [
         invoke: (args) => runCliAnything(args)
       }
     ],
+    directActions: [{ name: 'cliAnything.run', invoke: ([args]) => runCliAnything(args) }],
     getStatus: getCliAnythingStatus,
     getRuntimeStatus: getCliAnythingRuntimeStatus,
     stop: () => stopCliAnything()
@@ -618,6 +967,25 @@ const adapters: CapabilityAdapter[] = [
       enable_flag: 'desktopAutomationEnabled'
     },
     tools: [
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'desktop_run_queue',
+            description: '按顺序执行桌面自动化动作队列; 支持 dryRun. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                actions: { type: 'array', items: { type: 'object' } },
+                dryRun: { type: 'boolean' },
+                description: { type: 'string' }
+              },
+              required: ['actions']
+            }
+          }
+        },
+        invoke: (args) => runDesktopAutomationQueue(args)
+      },
       {
         definition: {
           type: 'function',
@@ -667,6 +1035,7 @@ const adapters: CapabilityAdapter[] = [
         invoke: (args) => desktopHotkey(args)
       }
     ],
+    directActions: [{ name: 'desktop.runQueue', invoke: ([args]) => runDesktopAutomationQueue(args) }],
     getStatus: getDesktopAutomationStatus,
     getRuntimeStatus: getDesktopAutomationRuntimeStatus,
     stop: () => stopDesktopAutomation()

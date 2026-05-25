@@ -7,6 +7,30 @@ let child: ChildProcessWithoutNullStreams | null = null;
 let startedAt: number | undefined;
 let lastError: string | undefined;
 
+function protocolError(message: string, code: number | null, signal: NodeJS.Signals | null, rawStdout: string, stderr: string) {
+  lastError = message;
+  return { ok: false, code, signal, json: null, rawStdout, stderr, error: message };
+}
+
+function parseProtocolResult(stdout: string, code: number | null, signal: NodeJS.Signals | null, stderr: string) {
+  const trimmed = stdout.trim();
+  if (!trimmed) return protocolError('CLI-Anything 协议错误: stdout 为空', code, signal, stdout, stderr);
+
+  let json: unknown;
+  try {
+    json = JSON.parse(trimmed);
+  } catch (e: any) {
+    return protocolError(`CLI-Anything 协议错误: stdout 不是有效 JSON (${e?.message ?? String(e)})`, code, signal, stdout, stderr);
+  }
+
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    return protocolError('CLI-Anything 协议错误: stdout JSON 必须是 object', code, signal, stdout, stderr);
+  }
+
+  if (code !== 0) lastError = `CLI-Anything 任务退出 code=${code} signal=${signal}`;
+  return { ok: code === 0, code, signal, json, stderr };
+}
+
 export function getCliAnythingStatus(): CapabilityStatus {
   const cfg = getConfig();
   if (cfg.safetyMode === 'safe') return { id: 'cli_anything', status: 'blocked', message: '仅危险模式可用' };
@@ -22,20 +46,36 @@ export async function runCliAnything(args: { input: Record<string, unknown>; sch
   const cfg = getConfig();
   if (!cfg.automation.cliAnythingCommand.trim()) throw new Error('未配置 CLI-Anything 命令');
   const timeoutMs = Math.max(1000, Math.min(args.timeoutMs ?? 60_000, 300_000));
-  const payload = JSON.stringify({ input: args.input ?? {}, schema: args.schema ?? null });
+  const payload = JSON.stringify({ version: 1, input: args.input ?? {}, schema: args.schema ?? null });
 
   return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
-      child?.kill();
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
       child = null;
       startedAt = undefined;
+    };
+    const settleResolve = (value: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const settleReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    const timer = setTimeout(() => {
       lastError = 'CLI-Anything 任务超时并已停止';
-      reject(new Error('CLI-Anything 任务超时并已停止'));
+      child?.kill();
+      settleReject(new Error('CLI-Anything 任务超时并已停止'));
     }, timeoutMs);
 
-    child = spawn(cfg.automation.cliAnythingCommand, [], {
+    child = spawn(cfg.automation.cliAnythingCommand, cfg.automation.cliAnythingArgs ?? [], {
       cwd: cfg.automation.cliAnythingWorkingDir || undefined,
       windowsHide: true,
       shell: false
@@ -49,22 +89,11 @@ export async function runCliAnything(args: { input: Record<string, unknown>; sch
       stderr = (stderr + chunk.toString('utf8')).slice(-8000);
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
-      child = null;
-      startedAt = undefined;
       lastError = err.message;
-      reject(err);
+      settleReject(err);
     });
     child.on('exit', (code, signal) => {
-      clearTimeout(timer);
-      child = null;
-      startedAt = undefined;
-      if (code !== 0) lastError = `CLI-Anything 任务退出 code=${code} signal=${signal}`;
-      let json: unknown = null;
-      try {
-        json = stdout.trim() ? JSON.parse(stdout) : null;
-      } catch {}
-      resolve({ ok: code === 0, code, signal, json, rawStdout: json ? undefined : stdout, stderr });
+      settleResolve(parseProtocolResult(stdout, code, signal, stderr));
     });
     child.stdin.end(payload);
   });

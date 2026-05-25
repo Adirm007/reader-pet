@@ -2,9 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 
 interface McpClientOptions {
   id: string;
-  command: string;
+  transport?: 'stdio' | 'http';
+  command?: string;
   args?: string[];
   cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
   timeoutMs?: number;
 }
 
@@ -25,8 +28,12 @@ export class McpClient {
   constructor(private readonly opts: McpClientOptions) {}
 
   async start(): Promise<void> {
+    if ((this.opts.transport ?? 'stdio') === 'http') {
+      this.started = true;
+      return;
+    }
     if (this.started && this.child) return;
-    if (!this.opts.command.trim()) throw new Error(`MCP server ${this.opts.id} 未配置命令`);
+    if (!this.opts.command?.trim()) throw new Error(`MCP server ${this.opts.id} 未配置命令`);
 
     this.child = spawn(this.opts.command, this.opts.args ?? [], {
       cwd: this.opts.cwd || undefined,
@@ -56,6 +63,7 @@ export class McpClient {
   }
 
   isRunning(): boolean {
+    if ((this.opts.transport ?? 'stdio') === 'http') return this.started;
     return this.started && !!this.child && !this.child.killed;
   }
 
@@ -68,6 +76,28 @@ export class McpClient {
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     await this.start();
     return this.request('tools/call', { name, arguments: args ?? {} });
+  }
+
+  async listResources(): Promise<any[]> {
+    await this.start();
+    const result = await this.request('resources/list', {});
+    return Array.isArray(result?.resources) ? result.resources : [];
+  }
+
+  async readResource(uri: string): Promise<unknown> {
+    await this.start();
+    return this.request('resources/read', { uri });
+  }
+
+  async listPrompts(): Promise<any[]> {
+    await this.start();
+    const result = await this.request('prompts/list', {});
+    return Array.isArray(result?.prompts) ? result.prompts : [];
+  }
+
+  async getPrompt(name: string, args: Record<string, unknown>): Promise<unknown> {
+    await this.start();
+    return this.request('prompts/get', { name, arguments: args ?? {} });
   }
 
   async stop(): Promise<void> {
@@ -84,6 +114,7 @@ export class McpClient {
   }
 
   private request(method: string, params: any): Promise<any> {
+    if ((this.opts.transport ?? 'stdio') === 'http') return this.httpRequest(method, params);
     if (!this.child) throw new Error(`MCP server ${this.opts.id} 未启动`);
     const id = this.nextId++;
     const timeoutMs = Math.max(1000, Math.min(this.opts.timeoutMs ?? 30_000, 120_000));
@@ -104,6 +135,33 @@ export class McpClient {
         reject(err);
       });
     });
+  }
+
+  private async httpRequest(method: string, params: any): Promise<any> {
+    if (!this.opts.url?.trim()) throw new Error(`MCP HTTP server ${this.opts.id} 未配置 URL`);
+    const id = this.nextId++;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.max(1000, Math.min(this.opts.timeoutMs ?? 30_000, 120_000)));
+    try {
+      const res = await fetch(this.opts.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...(this.opts.headers ?? {})
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+        signal: controller.signal
+      });
+      if (!res.ok) throw new Error(`MCP HTTP ${method} failed: ${res.status} ${res.statusText}`);
+      const text = await res.text();
+      const jsonText = text.split('\n').find((line) => line.trim().startsWith('{')) ?? text;
+      const msg = JSON.parse(jsonText.replace(/^data:\s*/, ''));
+      if (msg.error) throw new Error(msg.error.message ?? JSON.stringify(msg.error));
+      return msg.result;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private notify(method: string, params: any): void {
