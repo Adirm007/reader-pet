@@ -163,81 +163,100 @@ function openPanelWindow() {
   });
 }
 
-ipcMain.handle('panel:open', () => openPanelWindow());
-ipcMain.handle('panel:close', () => panelWindow?.close());
+function registerWindowIpc() {
+  ipcMain.handle('panel:open', () => openPanelWindow());
+  ipcMain.handle('panel:close', () => panelWindow?.close());
 
-// 渲染端通过这个 IPC 把磁盘图片转 data: URL — 绕过 file:// 限制
-// 路径为空时, 自动 fallback 到内置占位图 (resources/portrait/yomu-default.png).
-// 这样 Live2D SDK 接入前面板不会留空白
-ipcMain.handle('panel:loadLive2dAsset', async (_, p: string) => {
-  let target = p;
-  if (!target || typeof target !== 'string') {
-    // 找内置占位图: dev 走源目录, packaged 走 process.resourcesPath
-    const candidates = [
-      join(__dirname, '../../resources/portrait/yomu-default.png'),
-      join(process.resourcesPath ?? '', 'portrait/yomu-default.png'),
-      join(__dirname, '../../../resources/portrait/yomu-default.png')
-    ];
-    target = candidates.find((c) => existsSync(c)) ?? '';
-    if (!target) return { ok: false, reason: '未配置立绘且找不到内置占位图' };
-  }
-  try {
-    const ext = extname(target).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp'
-    };
-    if (!mimeMap[ext]) {
-      return { ok: false, reason: '暂只支持 png/jpg/gif/webp 静态立绘; .model3.json 等待 Live2D Web SDK 接入' };
+  // 渲染端通过这个 IPC 把磁盘图片转 data: URL — 绕过 file:// 限制
+  // 路径为空时, 自动 fallback 到内置占位图 (resources/portrait/yomu-default.png).
+  // 这样 Live2D SDK 接入前面板不会留空白
+  ipcMain.handle('panel:loadLive2dAsset', async (_, p: string) => {
+    let target = p;
+    if (!target || typeof target !== 'string') {
+      // 找内置占位图: dev 走源目录, packaged 走 process.resourcesPath
+      const candidates = [
+        join(__dirname, '../../resources/portrait/yomu-default.png'),
+        join(process.resourcesPath ?? '', 'portrait/yomu-default.png'),
+        join(__dirname, '../../../resources/portrait/yomu-default.png')
+      ];
+      target = candidates.find((c) => existsSync(c)) ?? '';
+      if (!target) return { ok: false, reason: '未配置立绘且找不到内置占位图' };
     }
-    const buf = await fs.readFile(target);
-    return {
-      ok: true,
-      dataUrl: `data:${mimeMap[ext]};base64,${buf.toString('base64')}`,
-      builtin: !p   // 标记是否用了内置占位
-    };
-  } catch (e: any) {
-    return { ok: false, reason: e?.message ?? String(e) };
-  }
-});
+    try {
+      const ext = extname(target).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+      };
+      if (!mimeMap[ext]) {
+        return { ok: false, reason: '暂只支持 png/jpg/gif/webp 静态立绘; .model3.json 等待 Live2D Web SDK 接入' };
+      }
+      const buf = await fs.readFile(target);
+      return {
+        ok: true,
+        dataUrl: `data:${mimeMap[ext]};base64,${buf.toString('base64')}`,
+        builtin: !p   // 标记是否用了内置占位
+      };
+    } catch (e: any) {
+      return { ok: false, reason: e?.message ?? String(e) };
+    }
+  });
 
-ipcMain.handle('pet:hide', () => petWindow?.hide());
-ipcMain.handle('pet:quit', () => app.quit());
-ipcMain.handle('window:reload-pet', () => {
-  if (petWindow) {
-    petWindow.close();
-    petWindow = null;
-  }
-  createPetWindow();
-});
+  ipcMain.handle('pet:hide', () => petWindow?.hide());
+  ipcMain.handle('pet:quit', () => app.quit());
+  ipcMain.handle('window:reload-pet', () => {
+    if (petWindow) {
+      petWindow.close();
+      petWindow = null;
+    }
+    createPetWindow();
+  });
+
+  ipcMain.handle('pet:startDrag', () => {
+    if (!petWindow) return;
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = petWindow.getBounds();
+    petDragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+    if (petDragTimer) clearInterval(petDragTimer);
+    petDragTimer = setInterval(() => {
+      if (!petWindow || !petDragOffset) return;
+      const c = screen.getCursorScreenPoint();
+      petWindow.setPosition(c.x - petDragOffset.x, c.y - petDragOffset.y);
+    }, 16);
+  });
+  ipcMain.handle('pet:endDrag', () => {
+    if (petDragTimer) {
+      clearInterval(petDragTimer);
+      petDragTimer = null;
+    }
+    petDragOffset = null;
+  });
+
+  ipcMain.handle('autoLaunch:set', (_, enabled: boolean) => {
+    applyAutoLaunch(enabled);
+    try {
+      return app.getLoginItemSettings({ args: ['--autostart'] }).openAtLogin;
+    } catch {
+      return enabled;
+    }
+  });
+  ipcMain.handle('autoLaunch:get', () => {
+    try {
+      return app.getLoginItemSettings({ args: ['--autostart'] }).openAtLogin;
+    } catch {
+      return false;
+    }
+  });
+}
 
 // ============ 桌宠手动拖动 ============
 // 不用 -webkit-app-region: drag (会吞掉所有鼠标事件)
 // 改成主进程轮询光标 + setPosition. 渲染端 mousedown→start, mouseup→end
 let petDragOffset: { x: number; y: number } | null = null;
 let petDragTimer: NodeJS.Timeout | null = null;
-ipcMain.handle('pet:startDrag', () => {
-  if (!petWindow) return;
-  const cursor = screen.getCursorScreenPoint();
-  const bounds = petWindow.getBounds();
-  petDragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
-  if (petDragTimer) clearInterval(petDragTimer);
-  petDragTimer = setInterval(() => {
-    if (!petWindow || !petDragOffset) return;
-    const c = screen.getCursorScreenPoint();
-    petWindow.setPosition(c.x - petDragOffset.x, c.y - petDragOffset.y);
-  }, 16);
-});
-ipcMain.handle('pet:endDrag', () => {
-  if (petDragTimer) {
-    clearInterval(petDragTimer);
-    petDragTimer = null;
-  }
-  petDragOffset = null;
-});
 
 // 开机自启 (写入操作系统 login items / 注册表 Run 键)
 function applyAutoLaunch(enabled: boolean) {
@@ -251,23 +270,9 @@ function applyAutoLaunch(enabled: boolean) {
     /* 某些平台 / portable 模式可能失败, 不致命 */
   }
 }
-ipcMain.handle('autoLaunch:set', (_, enabled: boolean) => {
-  applyAutoLaunch(enabled);
-  try {
-    return app.getLoginItemSettings({ args: ['--autostart'] }).openAtLogin;
-  } catch {
-    return enabled;
-  }
-});
-ipcMain.handle('autoLaunch:get', () => {
-  try {
-    return app.getLoginItemSettings({ args: ['--autostart'] }).openAtLogin;
-  } catch {
-    return false;
-  }
-});
 
 app.whenReady().then(() => {
+  registerWindowIpc();
   registerIpc(
     () => settingsWindow,
     () => openSettingsWindow()

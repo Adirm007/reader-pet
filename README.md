@@ -192,6 +192,14 @@ npm install
 npm run dev
 ```
 
+预览运行：
+
+```bash
+npm start
+```
+
+`npm start` 会清理父进程继承的 `ELECTRON_RUN_AS_NODE` 环境变量后再启动 `electron-vite preview`，避免 Electron 主进程被错误当成 Node 进程加载。
+
 类型检查：
 
 ```bash
