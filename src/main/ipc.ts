@@ -7,10 +7,13 @@ import { listModels } from './providers';
 import {
   CAPABILITIES,
   listCapabilityStatuses,
+  listCapabilityRuntimeStatuses,
   getCapabilityStatus,
   emergencyStop
 } from './capabilities';
 import { invokeDirectAction } from './capabilities/registry';
+import { listBrowserMcpTools } from './capabilities/playwright-mcp';
+import { listMcpTools } from './capabilities/mcp';
 import {
   installStopHook,
   uninstallStopHook,
@@ -101,7 +104,10 @@ export function registerIpc(
   // 能力清单 (UI 展示)
   ipcMain.handle('capabilities:list', () => CAPABILITIES);
   ipcMain.handle('capabilities:statuses', () => listCapabilityStatuses());
+  ipcMain.handle('capabilities:runtimeStatuses', () => listCapabilityRuntimeStatuses());
   ipcMain.handle('capabilities:emergencyStop', () => emergencyStop());
+  ipcMain.handle('capabilities:listBrowserMcpTools', () => listBrowserMcpTools());
+  ipcMain.handle('capabilities:listMcpTools', (_, serverId: string) => listMcpTools(serverId));
   ipcMain.handle('capabilities:isPlaywrightInstalled', async () => {
     const status = await getCapabilityStatus('browser');
     return status?.status !== 'not_installed';

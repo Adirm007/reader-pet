@@ -1,18 +1,19 @@
-import type { CapabilityDescriptor, CapabilityStatus, ToolDefinition } from '../../shared/types';
+import type { CapabilityDescriptor, CapabilityRuntimeStatus, CapabilityStatus, ToolDefinition } from '../../shared/types';
 import { fileRead, fileWrite, fileList, fileStat } from './files';
 import { shellExec } from './shell';
-import { listScreenSources, observeScreenSequence, screenCapture, stopScreenObservation } from './screen';
+import { getScreenObservationRuntimeStatus, listScreenSources, observeScreenSequence, screenCapture, stopScreenObservation } from './screen';
 import { browserGoto, isPlaywrightInstalled } from './browser';
-import { callBrowserMcpTool, listBrowserMcpTools, stopBrowserMcp } from './playwright-mcp';
-import { listProcesses, isMemoryRWInstalled, readMemory, scanMemory, stopMemoryScan, writeMemory } from './memory-rw';
-import { callMcpTool, getMcpStatus, listMcpServers, listMcpTools, stopMcpServers } from './mcp';
-import { getMaaStatus, runMaaTask, stopMaa } from './maa';
-import { getCliAnythingStatus, runCliAnything, stopCliAnything } from './cli-anything';
+import { callBrowserMcpTool, getBrowserMcpRuntimeStatus, listBrowserMcpTools, stopBrowserMcp } from './playwright-mcp';
+import { getMemoryScanRuntimeStatus, listProcesses, isMemoryRWInstalled, readMemory, scanMemory, stopMemoryScan, writeMemory } from './memory-rw';
+import { callMcpTool, getMcpRuntimeStatus, getMcpStatus, listMcpServers, listMcpTools, stopMcpServers } from './mcp';
+import { getMaaRuntimeStatus, getMaaStatus, runMaaTask, stopMaa } from './maa';
+import { getCliAnythingRuntimeStatus, getCliAnythingStatus, runCliAnything, stopCliAnything } from './cli-anything';
 import {
   desktopClick,
   desktopHotkey,
   desktopMoveMouse,
   desktopTypeText,
+  getDesktopAutomationRuntimeStatus,
   getDesktopAutomationStatus,
   stopDesktopAutomation
 } from './desktop-automation';
@@ -46,6 +47,7 @@ interface CapabilityAdapter {
   descriptor: CapabilityDescriptor;
   tools?: CapabilityTool[];
   getStatus?: () => Promise<CapabilityStatus> | CapabilityStatus;
+  getRuntimeStatus?: () => Promise<CapabilityRuntimeStatus> | CapabilityRuntimeStatus;
   directActions?: CapabilityDirectAction[];
   stop?: () => Promise<void> | void;
 }
@@ -53,6 +55,7 @@ interface CapabilityAdapter {
 export interface EmergencyStopResult {
   ok: boolean;
   stopped: string[];
+  idle: string[];
   errors: Array<{ id: string; error: string }>;
 }
 
@@ -300,6 +303,7 @@ const adapters: CapabilityAdapter[] = [
       { name: 'screen.capture', invoke: ([opts]) => screenCapture(opts) },
       { name: 'screen.listSources', invoke: () => listScreenSources() }
     ],
+    getRuntimeStatus: getScreenObservationRuntimeStatus,
     stop: () => stopScreenObservation()
   },
   {
@@ -369,6 +373,7 @@ const adapters: CapabilityAdapter[] = [
         : { id: 'browser', status: 'disabled', message: '未配置 Playwright MCP 命令' };
     },
     directActions: [{ name: 'browser.goto', invoke: ([url]) => browserGoto(url) }],
+    getRuntimeStatus: getBrowserMcpRuntimeStatus,
     stop: () => stopBrowserMcp()
   },
   {
@@ -463,6 +468,7 @@ const adapters: CapabilityAdapter[] = [
         : { id: 'memory_rw', status: 'not_installed', message: '未安装' };
     },
     directActions: [{ name: 'memory.listProcesses', invoke: () => listProcesses() }],
+    getRuntimeStatus: getMemoryScanRuntimeStatus,
     stop: () => stopMemoryScan()
   },
   {
@@ -524,6 +530,7 @@ const adapters: CapabilityAdapter[] = [
       }
     ],
     getStatus: getMcpStatus,
+    getRuntimeStatus: getMcpRuntimeStatus,
     stop: () => stopMcpServers()
   },
   {
@@ -560,6 +567,7 @@ const adapters: CapabilityAdapter[] = [
       }
     ],
     getStatus: getMaaStatus,
+    getRuntimeStatus: getMaaRuntimeStatus,
     stop: () => stopMaa()
   },
   {
@@ -595,6 +603,7 @@ const adapters: CapabilityAdapter[] = [
       }
     ],
     getStatus: getCliAnythingStatus,
+    getRuntimeStatus: getCliAnythingRuntimeStatus,
     stop: () => stopCliAnything()
   },
   {
@@ -659,6 +668,7 @@ const adapters: CapabilityAdapter[] = [
       }
     ],
     getStatus: getDesktopAutomationStatus,
+    getRuntimeStatus: getDesktopAutomationRuntimeStatus,
     stop: () => stopDesktopAutomation()
   },
   {
@@ -851,6 +861,19 @@ export async function getCapabilityStatus(id: string): Promise<CapabilityStatus 
   return (await listCapabilityStatuses()).find((s) => s.id === id) ?? null;
 }
 
+export async function listCapabilityRuntimeStatuses(): Promise<CapabilityRuntimeStatus[]> {
+  return Promise.all(
+    adapters.map(async (a) => {
+      if (!a.getRuntimeStatus) return { id: a.descriptor.id, running: false };
+      try {
+        return await a.getRuntimeStatus();
+      } catch (e: any) {
+        return { id: a.descriptor.id, running: false, lastError: e?.message ?? String(e) };
+      }
+    })
+  );
+}
+
 export function listToolDefinitions(): ToolDefinition[] {
   return Array.from(toolMap.values()).map((t) => t.definition);
 }
@@ -885,15 +908,21 @@ export async function invokeDirectAction(name: string, args: any[]): Promise<unk
 
 export async function emergencyStop(): Promise<EmergencyStopResult> {
   const stopped: string[] = [];
+  const idle: string[] = [];
   const errors: EmergencyStopResult['errors'] = [];
   for (const adapter of adapters) {
     if (!adapter.stop) continue;
     try {
+      const runtime = adapter.getRuntimeStatus ? await adapter.getRuntimeStatus() : { id: adapter.descriptor.id, running: true };
+      if (!runtime.running) {
+        idle.push(adapter.descriptor.id);
+        continue;
+      }
       await adapter.stop();
-      stopped.push(adapter.descriptor.id);
+      stopped.push(runtime.detail ? `${adapter.descriptor.id}: ${runtime.detail}` : adapter.descriptor.id);
     } catch (e: any) {
       errors.push({ id: adapter.descriptor.id, error: e?.message ?? String(e) });
     }
   }
-  return { ok: errors.length === 0, stopped, errors };
+  return { ok: errors.length === 0, stopped, idle, errors };
 }

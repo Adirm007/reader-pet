@@ -44,6 +44,8 @@ export interface McpServerConfig {
   cwd?: string;
   enabled: boolean;
   riskLevel: 'medium' | 'high' | 'critical';
+  allowedTools?: string[];
+  allowAllTools?: boolean;
 }
 
 export interface AutomationConfig {
@@ -230,6 +232,15 @@ export interface CapabilityStatus {
   id: string;
   status: CapabilityStatusKind;
   message?: string;
+}
+
+export interface CapabilityRuntimeStatus {
+  id: string;
+  running: boolean;
+  detail?: string;
+  pid?: number;
+  startedAt?: number;
+  lastError?: string;
 }
 
 export interface CapabilityDescriptor {

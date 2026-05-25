@@ -18,6 +18,9 @@
 - Claude Code 任务桥接
 - 安全模式 / 危险模式
 - 本机能力层与能力注册表
+- 本机能力设置页
+- MCP server 配置与 tool allowlist
+- 能力运行态可视化与可信 emergency stop 反馈
 - 可选 TTS
 - 可选 Neo4j 图记忆
 - 桌宠精灵图包
@@ -90,6 +93,7 @@ Reader Pet 可以和 Claude Code 协作：
 - 读取 transcript 尾部并用当前人设总结
 - 通过桌宠气泡向用户汇报
 - 将任务结果写入本地任务日志
+- 在本机能力设置页编辑 Playwright MCP、通用 MCP、MAA、CLI-Anything 与桌面自动化 provider 配置
 
 能力有限，故工程类能力原则上优先交给 Claude Code，而不是在桌宠本体里重复搓一个 IDE agent。
 
@@ -121,7 +125,8 @@ Reader Pet 可以和 Claude Code 协作：
 - 桌面自动化 Adapter scaffold
 - Claude Code 任务派发
 - 对话记忆检索 / 写入 / 撤回
-- emergency stop UI 与 Adapter stop hook
+- emergency stop UI、运行态展示与 Adapter stop hook
+- MCP server tool allowlist
 
 浏览器自动化、MCP、MAA/MaaFramework、CLI-Anything、桌面自动化、进程内存读写等高风险能力默认关闭，需要危险模式 + 对应独立开关。当前 MAA / CLI-Anything / 桌面自动化仍是可配置 Adapter scaffold：能进入能力清单、状态检测、按固定命令调用或明确失败，但不自动安装外部依赖。
 
@@ -149,7 +154,7 @@ Reader Pet 可以和 Claude Code 协作：
 
 危险模式是给个人自用场景准备的高权限模式。它可以造成文件损坏、配置覆盖、隐私泄漏、误执行命令、杀软警报等后果。除非完全理解自己在做什么否则不要开启。
 
-emergency stop 已接入设置页按钮与 Adapter `stop()` 调用链。当前 MAA、CLI-Anything、MCP、浏览器 MCP、屏幕观察、内存扫描等能力已提供停止逻辑；桌面自动化仍是 scaffold，`stop()` 暂为空实现。后续新增长期运行能力（例如完整桌面自动化、视频观察）时必须实现真实 stop hook。
+emergency stop 已接入设置页按钮、运行态展示与 Adapter `stop()` 调用链。当前 MAA、CLI-Anything、MCP、浏览器 MCP、屏幕观察、内存扫描等能力已提供停止逻辑；桌面自动化仍是 scaffold，当前只保留 provider 选择与停止接口。后续新增长期运行能力（例如完整桌面自动化、视频观察）时必须实现真实 stop hook。
 
 ### TTS
 
@@ -290,14 +295,14 @@ resources/                 打包资源、精灵图、立绘等
 
 短期路线：
 
-- Playwright MCP 浏览器能力：已接入配置式 MCP 调用；后续补设置页命令编辑与更多高级工具封装
+- Playwright MCP 浏览器能力：已接入配置式 MCP 调用、设置页命令编辑与 tools 诊断；后续补更多高级工具封装
 - 屏幕观察能力：已支持屏幕源列表和有限帧观察；后续再评估视频观察
-- 通用进程内存读写：已接入基础 read/write/scan；后续按真实 memoryjs 环境继续打磨
-- MAA / MaaFramework：已接入 CLI Adapter scaffold；后续补真实任务配置 UI 与脚本资产管理
-- CLI-Anything：已接入结构化外部 CLI Adapter scaffold；后续验证真实工具协议是否稳定
-- MCP 长期插件标准：已接入 stdio MCP server / tool 调用地基；后续补插件配置 UI 与低风险 allowlist
-- 桌面自动化：已接入 Adapter scaffold；后续选择具体 provider 并实现动作队列
-- emergency stop：已接入设置页按钮与 Adapter `stop()` 调用链；后续补全所有长任务的真实 stop hook 与运行态可视化
+- 通用进程内存读写：已接入基础 read/write/scan 与扫描运行态；后续按真实 memoryjs 环境继续打磨
+- MAA / MaaFramework：已接入 CLI Adapter scaffold 与基础命令配置；后续补真实任务配置 UI 与脚本资产管理
+- CLI-Anything：已接入结构化外部 CLI Adapter scaffold 与基础命令配置；后续验证真实工具协议是否稳定
+- MCP 长期插件标准：已接入 stdio MCP server / tool 调用、插件配置 UI 与 tool allowlist；后续补更完整插件标准
+- 桌面自动化：已接入 Adapter scaffold 与 provider 选择；后续实现真实动作队列
+- emergency stop：已接入设置页按钮、运行态可视化与 Adapter `stop()` 调用链；后续补全所有长任务的真实 stop hook
 
 ## 许可证
 

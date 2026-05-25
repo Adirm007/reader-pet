@@ -1,4 +1,5 @@
 // 游戏内存读写 (Cheat Engine 风格)
+import type { CapabilityRuntimeStatus } from '../../shared/types';
 import { checkMemoryRW } from '../permissions';
 
 export interface ProcessInfo {
@@ -10,6 +11,9 @@ export type MemoryValueType = 'int8' | 'uint8' | 'int16' | 'uint16' | 'int32' | 
 
 let _memoryjs: any = null;
 let abortScan = false;
+let scanRunning = false;
+let scanStartedAt: number | undefined;
+let scanLastError: string | undefined;
 
 async function tryLoad() {
   if (_memoryjs) return _memoryjs;
@@ -80,15 +84,36 @@ export async function scanMemory(args: { pid: number; pattern: string; type?: Me
   const maxResults = Math.max(1, Math.min(Number(args.maxResults ?? 50), 100));
   abortScan = false;
   if (!m.findPattern) throw new Error('当前 memoryjs 版本未暴露 findPattern, 暂无法扫描');
-  const hits: number[] = [];
-  const regions = proc.modBaseAddr ? [{ base: proc.modBaseAddr, size: proc.modBaseSize ?? 0 }] : [];
-  for (const region of regions) {
-    if (abortScan) throw new Error('内存扫描已被紧急停止');
-    const found = m.findPattern(proc.handle, region.base, region.size, String(args.pattern), m.NORMAL, 0);
-    if (typeof found === 'number' && found > 0) hits.push(found);
-    if (hits.length >= maxResults) break;
+  scanRunning = true;
+  scanStartedAt = Date.now();
+  scanLastError = undefined;
+  try {
+    const hits: number[] = [];
+    const regions = proc.modBaseAddr ? [{ base: proc.modBaseAddr, size: proc.modBaseSize ?? 0 }] : [];
+    for (const region of regions) {
+      if (abortScan) throw new Error('内存扫描已被紧急停止');
+      const found = m.findPattern(proc.handle, region.base, region.size, String(args.pattern), m.NORMAL, 0);
+      if (typeof found === 'number' && found > 0) hits.push(found);
+      if (hits.length >= maxResults) break;
+    }
+    return { ok: true, hits: hits.slice(0, maxResults) };
+  } catch (e: any) {
+    scanLastError = e?.message ?? String(e);
+    throw e;
+  } finally {
+    scanRunning = false;
+    scanStartedAt = undefined;
   }
-  return { ok: true, hits: hits.slice(0, maxResults) };
+}
+
+export function getMemoryScanRuntimeStatus(): CapabilityRuntimeStatus {
+  return {
+    id: 'memory_rw',
+    running: scanRunning,
+    detail: scanRunning ? 'memory scan' : undefined,
+    startedAt: scanStartedAt,
+    lastError: scanLastError
+  };
 }
 
 export function stopMemoryScan(): void {

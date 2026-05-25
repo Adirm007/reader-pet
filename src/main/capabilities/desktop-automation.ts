@@ -1,6 +1,8 @@
-import type { CapabilityStatus } from '../../shared/types';
+import type { CapabilityRuntimeStatus, CapabilityStatus } from '../../shared/types';
 import { getConfig } from '../config';
 import { checkDesktopAutomation } from '../permissions';
+
+let abortRequested = false;
 
 const allowedHotkeys = new Set([
   'ctrl+c',
@@ -50,9 +52,24 @@ export async function desktopHotkey(args: { hotkey: string }) {
   throw new Error('桌面自动化 provider 尚未实现. 请先配置并安装受支持 provider.');
 }
 
-export async function stopDesktopAutomation(): Promise<void> {}
+export function getDesktopAutomationRuntimeStatus(): CapabilityRuntimeStatus {
+  const cfg = getConfig();
+  return {
+    id: 'desktop_automation',
+    running: false,
+    detail: cfg.automation.desktopAutomationProvider === 'none'
+      ? '未选择 provider'
+      : `${cfg.automation.desktopAutomationProvider} provider 尚未实现`,
+    lastError: abortRequested ? '已收到停止请求' : undefined
+  };
+}
+
+export async function stopDesktopAutomation(): Promise<void> {
+  abortRequested = true;
+}
 
 function ensureAllowed(): void {
+  abortRequested = false;
   const decision = checkDesktopAutomation();
   if (!decision.ok) throw new Error(`PermissionDenied: ${decision.reason}`);
 }

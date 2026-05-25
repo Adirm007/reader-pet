@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppConfig, CapabilityDescriptor, CapabilityStatus } from '../../../../shared/types';
+import type { AppConfig, CapabilityDescriptor, CapabilityRuntimeStatus, CapabilityStatus } from '../../../../shared/types';
 
 const COUNTDOWN_SECONDS = 10;
 
@@ -15,20 +15,25 @@ export default function SafetySection({
   const [phase, setPhase] = useState<'reading' | 'first-confirm' | 'second-confirm'>('reading');
   const [caps, setCaps] = useState<CapabilityDescriptor[]>([]);
   const [statuses, setStatuses] = useState<Record<string, CapabilityStatus>>({});
+  const [runtime, setRuntime] = useState<Record<string, CapabilityRuntimeStatus>>({});
   const [stopResult, setStopResult] = useState<string>('');
   const timerRef = useRef<number | null>(null);
 
   const refreshExtras = async () => {
-    const [c, s] = await Promise.all([
+    const [c, s, r] = await Promise.all([
       window.api.listCapabilities(),
-      window.api.listCapabilityStatuses()
+      window.api.listCapabilityStatuses(),
+      window.api.listCapabilityRuntimeStatuses()
     ]);
     setCaps(c);
     setStatuses(Object.fromEntries(s.map((item) => [item.id, item])));
+    setRuntime(Object.fromEntries(r.map((item) => [item.id, item])));
   };
 
   useEffect(() => {
     refreshExtras();
+    const timer = window.setInterval(refreshExtras, 2000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -85,11 +90,9 @@ export default function SafetySection({
 
   const emergencyStop = async () => {
     const r = await window.api.emergencyStop();
-    setStopResult(
-      r.ok
-        ? `已停止: ${r.stopped.length ? r.stopped.join(', ') : '无运行中能力'}`
-        : `部分失败: ${r.errors.map((e) => `${e.id}: ${e.error}`).join(' | ')}`
-    );
+    const stopped = r.stopped.length ? `已停止: ${r.stopped.join(', ')}` : '无运行中能力';
+    const errors = r.errors.length ? `；部分失败: ${r.errors.map((e) => `${e.id}: ${e.error}`).join(' | ')}` : '';
+    setStopResult(`${stopped}${errors}`);
     refreshExtras();
   };
 
@@ -109,6 +112,7 @@ export default function SafetySection({
   );
 
   const isDanger = cfg.safetyMode === 'danger';
+  const runningCapabilities = Object.values(runtime).filter((item) => item.running);
 
   return (
     <div className="section">
@@ -139,9 +143,14 @@ export default function SafetySection({
           <div className="muted" style={{ fontSize: 12 }}>
             中断 MCP、屏幕观察、内存扫描、MAA、CLI-Anything、桌面自动化等实现了 stop hook 的能力.
           </div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            当前运行中: {runningCapabilities.length
+              ? runningCapabilities.map((item) => `${item.id}${item.detail ? `(${item.detail})` : ''}`).join(', ')
+              : '无'}
+          </div>
           {stopResult && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{stopResult}</div>}
         </div>
-        <button className="danger" onClick={emergencyStop}>紧急停止所有能力</button>
+        <button className="danger" onClick={emergencyStop}>紧急停止运行中能力</button>
       </div>
 
       <h3 style={{ marginTop: 24 }}>能力清单</h3>

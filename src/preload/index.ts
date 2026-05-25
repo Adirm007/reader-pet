@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppConfig,
   CapabilityDescriptor,
+  CapabilityRuntimeStatus,
   CapabilityStatus,
   ChatResponse,
   ConversationSummaryRow,
@@ -60,8 +61,14 @@ const api = {
     ipcRenderer.invoke('capabilities:list'),
   listCapabilityStatuses: (): Promise<CapabilityStatus[]> =>
     ipcRenderer.invoke('capabilities:statuses'),
-  emergencyStop: (): Promise<{ ok: boolean; stopped: string[]; errors: Array<{ id: string; error: string }> }> =>
+  listCapabilityRuntimeStatuses: (): Promise<CapabilityRuntimeStatus[]> =>
+    ipcRenderer.invoke('capabilities:runtimeStatuses'),
+  emergencyStop: (): Promise<{ ok: boolean; stopped: string[]; idle: string[]; errors: Array<{ id: string; error: string }> }> =>
     ipcRenderer.invoke('capabilities:emergencyStop'),
+  listBrowserMcpTools: (): Promise<any[]> =>
+    ipcRenderer.invoke('capabilities:listBrowserMcpTools'),
+  listMcpTools: (serverId: string): Promise<any[]> =>
+    ipcRenderer.invoke('capabilities:listMcpTools', serverId),
   isPlaywrightInstalled: (): Promise<boolean> =>
     ipcRenderer.invoke('capabilities:isPlaywrightInstalled'),
   isMemoryRWInstalled: (): Promise<boolean> =>

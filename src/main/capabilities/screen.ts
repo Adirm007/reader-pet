@@ -1,5 +1,6 @@
 // 屏幕截图 — 经过 permissions gate
 import { desktopCapturer, BrowserWindow, dialog } from 'electron';
+import type { CapabilityRuntimeStatus } from '../../shared/types';
 import { checkScreenCapture, checkScreenObservation } from '../permissions';
 import { getConfig } from '../config';
 
@@ -10,6 +11,9 @@ export interface ScreenCaptureResult {
 }
 
 let abortObservation = false;
+let observationRunning = false;
+let observationStartedAt: number | undefined;
+let observationLastError: string | undefined;
 
 export async function listScreenSources(): Promise<Array<{ id: string; name: string; width: number; height: number }>> {
   const decision = checkScreenCapture();
@@ -58,16 +62,37 @@ export async function observeScreenSequence(opts?: {
   const frames = Math.max(1, Math.min(Number(opts?.frames ?? 3), 10));
   const intervalMs = Math.max(300, Math.min(Number(opts?.intervalMs ?? 1000), 10_000));
   abortObservation = false;
-  await confirmScreenAccess(opts?.requestingContext ?? '连续屏幕观察', undefined);
+  observationRunning = true;
+  observationStartedAt = Date.now();
+  observationLastError = undefined;
+  try {
+    await confirmScreenAccess(opts?.requestingContext ?? '连续屏幕观察', undefined);
 
-  const result: Array<{ ts: number; width: number; height: number; dataUrl: string }> = [];
-  for (let i = 0; i < frames; i += 1) {
-    if (abortObservation) throw new Error('屏幕观察已被紧急停止');
-    const frame = await screenCapture({ requestingContext: opts?.requestingContext, sourceId: opts?.sourceId, skipConfirm: true });
-    result.push({ ts: Date.now(), ...frame });
-    if (i < frames - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const result: Array<{ ts: number; width: number; height: number; dataUrl: string }> = [];
+    for (let i = 0; i < frames; i += 1) {
+      if (abortObservation) throw new Error('屏幕观察已被紧急停止');
+      const frame = await screenCapture({ requestingContext: opts?.requestingContext, sourceId: opts?.sourceId, skipConfirm: true });
+      result.push({ ts: Date.now(), ...frame });
+      if (i < frames - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return { ok: true, frames: result };
+  } catch (e: any) {
+    observationLastError = e?.message ?? String(e);
+    throw e;
+  } finally {
+    observationRunning = false;
+    observationStartedAt = undefined;
   }
-  return { ok: true, frames: result };
+}
+
+export function getScreenObservationRuntimeStatus(): CapabilityRuntimeStatus {
+  return {
+    id: 'screen_capture',
+    running: observationRunning,
+    detail: observationRunning ? 'screen observation' : undefined,
+    startedAt: observationStartedAt,
+    lastError: observationLastError
+  };
 }
 
 export function stopScreenObservation(): void {

@@ -1,14 +1,34 @@
+import type { CapabilityRuntimeStatus } from '../../shared/types';
 import { getConfig } from '../config';
 import { checkPlaywright } from '../permissions';
 import { McpClient } from './mcp-client';
 
 let client: McpClient | null = null;
+let clientSignature = '';
+let startedAt: number | undefined;
+let lastError: string | undefined;
 
-function getClient(): McpClient {
+function configSignature(): string {
+  const cfg = getConfig();
+  return JSON.stringify({
+    command: cfg.automation.playwrightMcpCommand,
+    args: cfg.automation.playwrightMcpArgs,
+    cwd: cfg.automation.playwrightMcpCwd || ''
+  });
+}
+
+async function resetIfConfigChanged(signature: string): Promise<void> {
+  if (!client || clientSignature === signature) return;
+  await stopBrowserMcp();
+}
+
+async function getClient(): Promise<McpClient> {
   const cfg = getConfig();
   if (!cfg.automation.playwrightMcpCommand.trim()) {
     throw new Error('未配置 Playwright MCP 命令. 请在 automation.playwrightMcpCommand 中填写本地命令.');
   }
+  const signature = configSignature();
+  await resetIfConfigChanged(signature);
   if (!client) {
     client = new McpClient({
       id: 'playwright',
@@ -16,6 +36,9 @@ function getClient(): McpClient {
       args: cfg.automation.playwrightMcpArgs,
       cwd: cfg.automation.playwrightMcpCwd || undefined
     });
+    clientSignature = signature;
+    startedAt = Date.now();
+    lastError = undefined;
   }
   return client;
 }
@@ -27,13 +50,23 @@ export function isPlaywrightMcpConfigured(): boolean {
 export async function listBrowserMcpTools(): Promise<any[]> {
   const decision = checkPlaywright();
   if (!decision.ok) throw new Error(`PermissionDenied: ${decision.reason}`);
-  return getClient().listTools();
+  try {
+    return await (await getClient()).listTools();
+  } catch (e: any) {
+    lastError = e?.message ?? String(e);
+    throw e;
+  }
 }
 
 export async function callBrowserMcpTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
   const decision = checkPlaywright();
   if (!decision.ok) throw new Error(`PermissionDenied: ${decision.reason}`);
-  return getClient().callTool(toolName, args ?? {});
+  try {
+    return await (await getClient()).callTool(toolName, args ?? {});
+  } catch (e: any) {
+    lastError = e?.message ?? String(e);
+    throw e;
+  }
 }
 
 export async function browserMcpGoto(url: string): Promise<{ ok: boolean; url: string; title: string; text: string }> {
@@ -58,9 +91,21 @@ export async function browserMcpGoto(url: string): Promise<{ ok: boolean; url: s
   };
 }
 
+export function getBrowserMcpRuntimeStatus(): CapabilityRuntimeStatus {
+  return {
+    id: 'browser',
+    running: !!client?.isRunning(),
+    detail: client?.isRunning() ? 'Playwright MCP client' : undefined,
+    startedAt,
+    lastError
+  };
+}
+
 export async function stopBrowserMcp(): Promise<void> {
   await client?.stop();
   client = null;
+  clientSignature = '';
+  startedAt = undefined;
 }
 
 function extractText(value: unknown): string {

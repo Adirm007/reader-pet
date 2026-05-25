@@ -5,6 +5,7 @@ import PersonaSection from './sections/PersonaSection';
 import ProfileSection from './sections/ProfileSection';
 import WindowSection from './sections/WindowSection';
 import SafetySection from './sections/SafetySection';
+import AutomationSection from './sections/AutomationSection';
 import ClaudeCodeSection from './sections/ClaudeCodeSection';
 import MemorySection from './sections/MemorySection';
 import ProactiveSection from './sections/ProactiveSection';
@@ -17,6 +18,7 @@ type Tab =
   | 'profile'
   | 'memory'
   | 'safety'
+  | 'automation'
   | 'claudecode'
   | 'proactive'
   | 'tts'
@@ -52,6 +54,7 @@ export default function Settings() {
         <NavBtn active={tab === 'safety'} onClick={() => setTab('safety')}>
           安全模式 {cfg.safetyMode === 'danger' ? '⚠' : ''}
         </NavBtn>
+        <NavBtn active={tab === 'automation'} onClick={() => setTab('automation')}>本机能力</NavBtn>
         <NavBtn active={tab === 'claudecode'} onClick={() => setTab('claudecode')}>
           Claude Code
         </NavBtn>
@@ -72,6 +75,7 @@ export default function Settings() {
         {tab === 'profile' && <ProfileSection cfg={cfg} onChange={refresh} />}
         {tab === 'memory' && <MemorySection />}
         {tab === 'safety' && <SafetySection cfg={cfg} onChange={refresh} />}
+        {tab === 'automation' && <AutomationSection cfg={cfg} onChange={refresh} />}
         {tab === 'claudecode' && <ClaudeCodeSection cfg={cfg} onChange={refresh} />}
         {tab === 'proactive' && <ProactiveSection cfg={cfg} onChange={refresh} />}
         {tab === 'tts' && <TTSSection cfg={cfg} onChange={refresh} />}

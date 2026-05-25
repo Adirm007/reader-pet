@@ -1,9 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { CapabilityStatus } from '../../shared/types';
+import type { CapabilityRuntimeStatus, CapabilityStatus } from '../../shared/types';
 import { getConfig } from '../config';
 import { checkMaa } from '../permissions';
 
 let child: ChildProcessWithoutNullStreams | null = null;
+let startedAt: number | undefined;
+let lastError: string | undefined;
 
 export function getMaaStatus(): CapabilityStatus {
   const cfg = getConfig();
@@ -29,6 +31,8 @@ export async function runMaaTask(args: { task: string; profile?: string; extraAr
     const timer = setTimeout(() => {
       child?.kill();
       child = null;
+      startedAt = undefined;
+      lastError = 'MAA 任务超时并已停止';
       reject(new Error('MAA 任务超时并已停止'));
     }, timeoutMs);
 
@@ -37,6 +41,8 @@ export async function runMaaTask(args: { task: string; profile?: string; extraAr
       windowsHide: true,
       shell: false
     });
+    startedAt = Date.now();
+    lastError = undefined;
     child.stdout.on('data', (chunk) => {
       stdout = (stdout + chunk.toString('utf8')).slice(-20_000);
     });
@@ -46,17 +52,33 @@ export async function runMaaTask(args: { task: string; profile?: string; extraAr
     child.on('error', (err) => {
       clearTimeout(timer);
       child = null;
+      startedAt = undefined;
+      lastError = err.message;
       reject(err);
     });
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       child = null;
+      startedAt = undefined;
+      if (code !== 0) lastError = `MAA 任务退出 code=${code} signal=${signal}`;
       resolve({ ok: code === 0, code, signal, stdout, stderr });
     });
   });
 }
 
+export function getMaaRuntimeStatus(): CapabilityRuntimeStatus {
+  return {
+    id: 'maa',
+    running: !!child && !child.killed,
+    detail: child && !child.killed ? 'MAA task' : undefined,
+    pid: child?.pid,
+    startedAt,
+    lastError
+  };
+}
+
 export async function stopMaa(): Promise<void> {
   if (child && !child.killed) child.kill();
   child = null;
+  startedAt = undefined;
 }

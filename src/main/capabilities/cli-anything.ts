@@ -1,9 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { CapabilityStatus } from '../../shared/types';
+import type { CapabilityRuntimeStatus, CapabilityStatus } from '../../shared/types';
 import { getConfig } from '../config';
 import { checkCliAnything } from '../permissions';
 
 let child: ChildProcessWithoutNullStreams | null = null;
+let startedAt: number | undefined;
+let lastError: string | undefined;
 
 export function getCliAnythingStatus(): CapabilityStatus {
   const cfg = getConfig();
@@ -28,6 +30,8 @@ export async function runCliAnything(args: { input: Record<string, unknown>; sch
     const timer = setTimeout(() => {
       child?.kill();
       child = null;
+      startedAt = undefined;
+      lastError = 'CLI-Anything 任务超时并已停止';
       reject(new Error('CLI-Anything 任务超时并已停止'));
     }, timeoutMs);
 
@@ -36,6 +40,8 @@ export async function runCliAnything(args: { input: Record<string, unknown>; sch
       windowsHide: true,
       shell: false
     });
+    startedAt = Date.now();
+    lastError = undefined;
     child.stdout.on('data', (chunk) => {
       stdout = (stdout + chunk.toString('utf8')).slice(-40_000);
     });
@@ -45,11 +51,15 @@ export async function runCliAnything(args: { input: Record<string, unknown>; sch
     child.on('error', (err) => {
       clearTimeout(timer);
       child = null;
+      startedAt = undefined;
+      lastError = err.message;
       reject(err);
     });
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       child = null;
+      startedAt = undefined;
+      if (code !== 0) lastError = `CLI-Anything 任务退出 code=${code} signal=${signal}`;
       let json: unknown = null;
       try {
         json = stdout.trim() ? JSON.parse(stdout) : null;
@@ -60,7 +70,19 @@ export async function runCliAnything(args: { input: Record<string, unknown>; sch
   });
 }
 
+export function getCliAnythingRuntimeStatus(): CapabilityRuntimeStatus {
+  return {
+    id: 'cli_anything',
+    running: !!child && !child.killed,
+    detail: child && !child.killed ? 'CLI-Anything task' : undefined,
+    pid: child?.pid,
+    startedAt,
+    lastError
+  };
+}
+
 export async function stopCliAnything(): Promise<void> {
   if (child && !child.killed) child.kill();
   child = null;
+  startedAt = undefined;
 }
