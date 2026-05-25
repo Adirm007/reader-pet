@@ -1,10 +1,12 @@
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import { builtinModules } from 'module';
 import { resolve } from 'path';
+
+const external = ['electron', ...builtinModules.flatMap((m) => [m, `node:${m}`])];
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),
@@ -12,17 +14,19 @@ export default defineConfig({
       }
     },
     build: {
-      rollupOptions: {
+      externalizeDeps: { include: ['memoryjs', 'playwright'] },
+      rolldownOptions: {
         input: resolve('src/main/index.ts'),
-        external: ['memoryjs', 'playwright']
+        external
       }
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     build: {
-      rollupOptions: {
-        input: resolve('src/preload/index.ts')
+      externalizeDeps: false,
+      rolldownOptions: {
+        input: resolve('src/preload/index.ts'),
+        external
       }
     }
   },

@@ -4,12 +4,13 @@ import { getConfig, setConfig } from './config';
 import { getPersonaList } from './personas-loader';
 import { sendChat, getRecentWindow, clearRecentWindow, testProvider } from './chat';
 import { listModels } from './providers';
-import { CAPABILITIES } from './capabilities';
-import { fileRead, fileWrite, fileList, fileStat } from './capabilities/files';
-import { shellExec } from './capabilities/shell';
-import { screenCapture } from './capabilities/screen';
-import { browserGoto, isPlaywrightInstalled } from './capabilities/browser';
-import { listProcesses, isMemoryRWInstalled } from './capabilities/memory-rw';
+import {
+  CAPABILITIES,
+  listCapabilityStatuses,
+  getCapabilityStatus,
+  emergencyStop
+} from './capabilities';
+import { invokeDirectAction } from './capabilities/registry';
 import {
   installStopHook,
   uninstallStopHook,
@@ -32,9 +33,18 @@ import {
   setFactStatus,
   deleteFact,
   listTasks,
-  getMemoryStats
+  getMemoryStats,
+  listConversationSummaries,
+  listMemoryJobs,
+  listMemorySources,
+  promoteTaskToMemory,
+  retryMemoryJob,
+  updateTaskMemoryState
 } from './memory/store';
-import type { ProviderConfig, SafetyMode, FactStatus } from '../shared/types';
+import { testGraphConnection, getGraphStats } from './memory/neo4j-client';
+import { kickMemoryWorker } from './memory/jobs';
+import { listMonologues, clearMonologues, getLogFilePath } from './inner-monologue-log';
+import type { ProviderConfig, SafetyMode, FactStatus, MemoryJobStatus, RecallPolicy, TaskMemoryStatus } from '../shared/types';
 
 export function registerIpc(
   getSettingsWindow: () => BrowserWindow | null,
@@ -90,18 +100,26 @@ export function registerIpc(
 
   // 能力清单 (UI 展示)
   ipcMain.handle('capabilities:list', () => CAPABILITIES);
-  ipcMain.handle('capabilities:isPlaywrightInstalled', () => isPlaywrightInstalled());
-  ipcMain.handle('capabilities:isMemoryRWInstalled', () => isMemoryRWInstalled());
+  ipcMain.handle('capabilities:statuses', () => listCapabilityStatuses());
+  ipcMain.handle('capabilities:emergencyStop', () => emergencyStop());
+  ipcMain.handle('capabilities:isPlaywrightInstalled', async () => {
+    const status = await getCapabilityStatus('browser');
+    return status?.status !== 'not_installed';
+  });
+  ipcMain.handle('capabilities:isMemoryRWInstalled', async () => {
+    const status = await getCapabilityStatus('memory_rw');
+    return status?.status !== 'not_installed';
+  });
 
   // 直接调用能力 (调试 / Settings 试运行用; 实际生产路径走 LLM tool calling)
-  ipcMain.handle('cap:fileRead', (_, p: string) => fileRead(p));
-  ipcMain.handle('cap:fileWrite', (_, p: string, c: string) => fileWrite(p, c));
-  ipcMain.handle('cap:fileList', (_, p: string) => fileList(p));
-  ipcMain.handle('cap:fileStat', (_, p: string) => fileStat(p));
-  ipcMain.handle('cap:shell', (_, cmd: string, opts: any) => shellExec(cmd, opts));
-  ipcMain.handle('cap:screen', (_, opts: any) => screenCapture(opts));
-  ipcMain.handle('cap:browserGoto', (_, url: string) => browserGoto(url));
-  ipcMain.handle('cap:listProcesses', () => listProcesses());
+  ipcMain.handle('cap:fileRead', (_, p: string) => invokeDirectAction('file.read', [p]));
+  ipcMain.handle('cap:fileWrite', (_, p: string, c: string) => invokeDirectAction('file.write', [p, c]));
+  ipcMain.handle('cap:fileList', (_, p: string) => invokeDirectAction('file.list', [p]));
+  ipcMain.handle('cap:fileStat', (_, p: string) => invokeDirectAction('file.stat', [p]));
+  ipcMain.handle('cap:shell', (_, cmd: string, opts: any) => invokeDirectAction('shell.exec', [cmd, opts]));
+  ipcMain.handle('cap:screen', (_, opts: any) => invokeDirectAction('screen.capture', [opts]));
+  ipcMain.handle('cap:browserGoto', (_, url: string) => invokeDirectAction('browser.goto', [url]));
+  ipcMain.handle('cap:listProcesses', () => invokeDirectAction('memory.listProcesses', []));
 
   // Claude Code 桥接
   ipcMain.handle('cc:installHook', async () => {
@@ -136,6 +154,33 @@ export function registerIpc(
     return { ok: true };
   });
   ipcMain.handle('mem:listTasks', (_, limit: number) => listTasks(limit));
+  ipcMain.handle('mem:updateTaskMemoryState', (_, id: number, patch: { memory_status?: TaskMemoryStatus; recall_policy?: RecallPolicy; user_note?: string }) => {
+    updateTaskMemoryState(id, patch);
+    return { ok: true };
+  });
+  ipcMain.handle('mem:promoteTaskToMemory', (_, id: number, opts?: { title?: string; summary?: string; importance?: number; recall_policy?: RecallPolicy }) =>
+    promoteTaskToMemory(id, opts)
+  );
+  ipcMain.handle('mem:listSources', (_, memoryType: string, memoryId: number) =>
+    listMemorySources(memoryType, memoryId)
+  );
+  ipcMain.handle('mem:graphTestConnection', () => testGraphConnection());
+  ipcMain.handle('mem:graphStats', () => getGraphStats());
+  ipcMain.handle('mem:listSummaries', (_, limit?: number, query?: string) =>
+    listConversationSummaries({ limit, query })
+  );
+  ipcMain.handle('mem:listJobs', (_, status?: MemoryJobStatus, limit?: number) =>
+    listMemoryJobs({ status, limit })
+  );
+  ipcMain.handle('mem:retryJob', (_, id: number) => {
+    retryMemoryJob(id);
+    kickMemoryWorker();
+    return { ok: true };
+  });
+  ipcMain.handle('mem:kickDigestion', () => {
+    kickMemoryWorker();
+    return { ok: true };
+  });
 
   // 主动行为
   ipcMain.handle('proactive:triggerLetter', () => triggerLetterNow());
@@ -158,5 +203,17 @@ export function registerIpc(
     }
     await shell.openPath(dir);
     return dir;
+  });
+
+  // 内心独白日志 — 默认对用户与 LLM 双隐藏, 用户主动查询时调出
+  ipcMain.handle('innerMonologue:list', (_, limit?: number) => listMonologues(limit ?? 50));
+  ipcMain.handle('innerMonologue:clear', () => {
+    clearMonologues();
+    return true;
+  });
+  ipcMain.handle('innerMonologue:openLogFile', async () => {
+    const p = getLogFilePath();
+    await shell.openPath(p);
+    return p;
   });
 }

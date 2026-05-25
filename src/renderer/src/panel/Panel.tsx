@@ -9,6 +9,25 @@ interface ChatRow {
   persona_id?: string;
 }
 
+interface MonologueEntry {
+  ts: number;
+  source: 'chat' | 'chatter' | 'letter' | 'task-report';
+  persona: string;
+  provider: string;
+  model: string;
+  trigger?: string;
+  monologue: string;
+  dialog: string;
+  outputTokens?: number;
+}
+
+const SOURCE_LABELS: Record<MonologueEntry['source'], string> = {
+  chat: '对话',
+  chatter: '主动搭话',
+  letter: '每日信',
+  'task-report': '任务汇报'
+};
+
 export default function Panel() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [personas, setPersonas] = useState<PersonaMeta[]>([]);
@@ -17,6 +36,8 @@ export default function Panel() {
   const [pending, setPending] = useState(false);
   const [live2dUrl, setLive2dUrl] = useState<string | null>(null);
   const [live2dErr, setLive2dErr] = useState<string | null>(null);
+  const [monoOpen, setMonoOpen] = useState(false);
+  const [monoEntries, setMonoEntries] = useState<MonologueEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 初始加载: 配置 + 人设 + 最近 60 条 episode
@@ -41,12 +62,11 @@ export default function Panel() {
     })();
   }, []);
 
-  // 立绘加载
+  // 立绘加载 — 路径为空时让 main 端 fallback 到内置占位图
   useEffect(() => {
     setLive2dUrl(null);
     setLive2dErr(null);
-    const p = cfg?.panel?.live2dModelPath;
-    if (!p) return;
+    const p = cfg?.panel?.live2dModelPath ?? '';
     void (async () => {
       const r = await window.api.loadLive2dAsset(p);
       if (r.ok && r.dataUrl) setLive2dUrl(r.dataUrl);
@@ -132,6 +152,23 @@ export default function Panel() {
     setRows([]);
   };
 
+  const openMonologues = useCallback(async () => {
+    const list = await window.api.innerMonologueList(100);
+    setMonoEntries(list);
+    setMonoOpen(true);
+  }, []);
+
+  const refreshMonologues = useCallback(async () => {
+    const list = await window.api.innerMonologueList(100);
+    setMonoEntries(list);
+  }, []);
+
+  const clearMonologues = useCallback(async () => {
+    if (!confirm('清空所有内心独白记录 (含磁盘 jsonl)? 这不会删除长期事实、摘要和对话历史.')) return;
+    await window.api.innerMonologueClear();
+    setMonoEntries([]);
+  }, []);
+
   if (!cfg) return <div style={{ padding: 24 }}>加载中…</div>;
 
   return (
@@ -142,14 +179,12 @@ export default function Panel() {
             <img src={live2dUrl} alt="立绘" />
           ) : (
             <div className="panel-portrait-empty">
-              <div style={{ fontSize: 14, fontWeight: 600 }}>立绘槽</div>
-              <div style={{ fontSize: 12, marginTop: 6, opacity: 0.7 }}>
-                {live2dErr
-                  ? `加载失败: ${live2dErr}`
-                  : '在设置 → 主动行为 (待挪) 或 窗口 中填 panel.live2dModelPath'}
+              <div className="portrait-empty-title">立绘加载失败</div>
+              <div className="portrait-empty-reason">
+                {live2dErr ?? '未知原因'}
               </div>
-              <div style={{ fontSize: 11, marginTop: 10, opacity: 0.55 }}>
-                .model3.json 暂未集成 Web SDK; 现支持 png/jpg/gif/webp
+              <div className="portrait-empty-hint">
+                可在 设置 → 面板 中指定本地立绘路径覆盖默认
               </div>
             </div>
           )}
@@ -173,6 +208,9 @@ export default function Panel() {
         <div className="panel-side-actions">
           <button onClick={() => window.api.openSettings()}>设置</button>
           <button onClick={clearHistory}>清空视图</button>
+          <button className="panel-mono-toggle" onClick={openMonologues}>
+            翻阅夜梦的思考
+          </button>
           <button onClick={() => window.api.closePanel()}>关闭面板</button>
         </div>
       </aside>
@@ -218,6 +256,61 @@ export default function Panel() {
           </button>
         </div>
       </main>
+
+      {monoOpen && (
+        <div className="panel-mono-overlay" onClick={() => setMonoOpen(false)}>
+          <div className="panel-mono-book" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-mono-head">
+              <div>
+                <h2>夜梦 · 内心独白日志</h2>
+                <p className="panel-mono-note">这些记录只用于观察角色内思考和调试模型行为，不参与长期记忆、后台整理或召回。清空它不会删除事实、摘要和对话历史。</p>
+              </div>
+              <div className="panel-mono-head-actions">
+                <button onClick={() => void refreshMonologues()}>刷新</button>
+                <button onClick={() => void window.api.innerMonologueOpenLogFile()}>
+                  打开 jsonl
+                </button>
+                <button onClick={() => void clearMonologues()}>清空</button>
+                <button onClick={() => setMonoOpen(false)}>合上</button>
+              </div>
+            </div>
+            <div className="panel-mono-body">
+              {monoEntries.length === 0 ? (
+                <div className="panel-mono-empty">
+                  这里还没有任何思考记录. 与夜梦说几句话试试.
+                </div>
+              ) : (
+                monoEntries
+                  .slice()
+                  .reverse()
+                  .map((m) => (
+                    <div className="panel-mono-entry" key={m.ts + m.source}>
+                      <div className="panel-mono-entry-head">
+                        <span className="panel-mono-entry-source">
+                          {SOURCE_LABELS[m.source]}
+                        </span>
+                        <span>{new Date(m.ts).toLocaleString()}</span>
+                        <span>
+                          {m.persona} · {m.model || m.provider}
+                        </span>
+                        {typeof m.outputTokens === 'number' && (
+                          <span>{m.outputTokens} tokens</span>
+                        )}
+                      </div>
+                      {m.trigger && (
+                        <div className="panel-mono-entry-trigger">{m.trigger}</div>
+                      )}
+                      <div className="panel-mono-entry-text">{m.monologue}</div>
+                      {m.dialog && (
+                        <div className="panel-mono-entry-dialog">{m.dialog}</div>
+                      )}
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

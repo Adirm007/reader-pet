@@ -23,6 +23,7 @@ export default function Pet() {
   const [pending, setPending] = useState(false);
   const [hasProvider, setHasProvider] = useState<boolean | null>(null);
   const [spritePkg, setSpritePkg] = useState<PetSpritePackage | null>(null);
+  const [fpsMultiplier, setFpsMultiplier] = useState<number>(1);
   const [petState, setPetState] = useState<PetState>('idle');
   const ttsCfgRef = useRef<{ enabled: boolean; autoSpeakOnBubble: boolean } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -38,6 +39,7 @@ export default function Pet() {
         enabled: !!cfg.tts?.enabled,
         autoSpeakOnBubble: !!cfg.tts?.autoSpeakOnBubble
       };
+      setFpsMultiplier(cfg.petSprite?.fpsMultiplier ?? 0.6);
       if (cfg.petSprite?.activePackageId) {
         const pkg = await window.api.petSpriteLoad(cfg.petSprite.activePackageId);
         if (pkg) setSpritePkg(pkg);
@@ -167,9 +169,15 @@ export default function Pet() {
         pkg={spritePkg}
         state={petState}
         displayWidth={displayWidth}
+        fpsMultiplier={fpsMultiplier}
+        draggable
         onClick={() => {
           noteInteract();
           setInputOpen((v) => !v);
+        }}
+        onDoubleClick={() => {
+          noteInteract();
+          window.api.openPanel();
         }}
       />
 
@@ -193,7 +201,6 @@ export default function Pet() {
           <button onClick={send} disabled={!hasProvider || pending || !inputText.trim()}>
             {pending ? '…' : '发送'}
           </button>
-          <button className="ghost" onClick={() => window.api.openPanel()}>面板</button>
           <button className="ghost" onClick={() => window.api.openSettings()}>设置</button>
         </div>
       )}

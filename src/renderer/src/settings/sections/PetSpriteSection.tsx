@@ -13,6 +13,7 @@ export default function PetSpriteSection({
 }) {
   const [list, setList] = useState<Array<{ id: string; displayName: string; description?: string }>>([]);
   const [activeId, setActiveId] = useState(cfg.petSprite?.activePackageId ?? '');
+  const [fpsMultiplier, setFpsMultiplier] = useState<number>(cfg.petSprite?.fpsMultiplier ?? 0.6);
   const [pkg, setPkg] = useState<PetSpritePackage | null>(null);
   const [preview, setPreview] = useState<PetState>('idle');
   const [msg, setMsg] = useState('');
@@ -39,7 +40,11 @@ export default function PetSpriteSection({
 
   const save = async () => {
     await window.api.setConfig({
-      petSprite: { activePackageId: activeId, defaultFps: cfg.petSprite?.defaultFps ?? 8 }
+      petSprite: {
+        activePackageId: activeId,
+        defaultFps: cfg.petSprite?.defaultFps ?? 8,
+        fpsMultiplier
+      }
     });
     await window.api.reloadPetWindow();
     setMsg('已保存. 桌宠窗口已重建以加载新精灵图.');
@@ -80,6 +85,21 @@ export default function PetSpriteSection({
         </select>
       </label>
 
+      <label>
+        播放速度倍率 · 当前 {fpsMultiplier.toFixed(2)}×
+        <input
+          type="range"
+          min={0.3}
+          max={1.5}
+          step={0.05}
+          value={fpsMultiplier}
+          onChange={(e) => setFpsMultiplier(parseFloat(e.target.value))}
+        />
+        <span className="muted" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
+          0.3 ≈ 慢动作, 1.0 = 包内 fps 原速, 1.5 = 快进. 默认 0.6 (放慢, 避免鬼畜).
+        </span>
+      </label>
+
       {list.length === 0 && (
         <p className="muted" style={{ fontSize: 12.5 }}>
           还没扫描到任何精灵图包. 操作步骤: ① 在 Codex 里跑 hatch-pet skill, 把头像作为参考图;
@@ -112,7 +132,7 @@ export default function PetSpriteSection({
               display: 'inline-block'
             }}
           >
-            <PetSprite pkg={pkg} state={preview} displayWidth={192} />
+            <PetSprite pkg={pkg} state={preview} displayWidth={192} fpsMultiplier={fpsMultiplier} />
           </div>
           <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
             cells: {pkg.cellWidth}×{pkg.cellHeight} · 网格: {pkg.cols} 列 × {pkg.rows} 行 · clip:

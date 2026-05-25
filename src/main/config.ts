@@ -63,7 +63,18 @@ const defaults: AppConfig = {
   },
   petSprite: {
     activePackageId: 'yomeko',
-    defaultFps: 8
+    defaultFps: 8,
+    fpsMultiplier: 0.6
+  },
+  memory: {
+    graphEnabled: false,
+    neo4jUri: 'bolt://127.0.0.1:7687',
+    neo4jUser: 'neo4j',
+    neo4jPassword: '',
+    graphWriteEnabled: false,
+    graphRecallEnabled: false,
+    digestionEnabled: false,
+    graphRecallTimeoutMs: 1200
   }
 };
 

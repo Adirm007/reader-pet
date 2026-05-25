@@ -105,6 +105,19 @@ export interface PetSpriteConfig {
   activePackageId: string;
   // 默认 idle 时帧率回退 (clip.fps 优先)
   defaultFps: number;
+  // 全局播放速度倍率, 0.3 ~ 1.5; 默认 0.6 (即放慢到 60%, 避免鬼畜)
+  fpsMultiplier?: number;
+}
+
+export interface MemoryConfig {
+  graphEnabled: boolean;
+  neo4jUri: string;
+  neo4jUser: string;
+  neo4jPassword: string;
+  graphWriteEnabled: boolean;
+  graphRecallEnabled: boolean;
+  digestionEnabled: boolean;
+  graphRecallTimeoutMs: number;
 }
 
 export interface AppConfig {
@@ -126,6 +139,7 @@ export interface AppConfig {
   tts: TTSConfig;
   panel: PanelConfig;
   petSprite: PetSpriteConfig;
+  memory: MemoryConfig;
 }
 
 export interface ChatMessage {
@@ -147,6 +161,9 @@ export interface ChatRequest {
   maxTokens?: number;
   temperature?: number;
   tools?: ToolDefinition[];
+  // 强制模型从这段文本开始续写 (Anthropic 原生支持; DeepSeek 走 prefix:true; 其它 OAI 端尽力)
+  // 用于把模型直接锁进"九十九夜梦的第一个字"
+  prefill?: string;
 }
 
 export interface ToolDefinition {
@@ -177,6 +194,14 @@ export interface PersonaMeta {
   description: string;
 }
 
+export type CapabilityStatusKind = 'available' | 'disabled' | 'not_installed' | 'unavailable' | 'blocked';
+
+export interface CapabilityStatus {
+  id: string;
+  status: CapabilityStatusKind;
+  message?: string;
+}
+
 export interface CapabilityDescriptor {
   id: string;
   display_name: string;
@@ -185,6 +210,7 @@ export interface CapabilityDescriptor {
   available_in_safe: boolean;
   available_in_danger: boolean;
   requires_extra_enable?: boolean;  // 即使危险模式也要专门勾选
+  enable_flag?: keyof CapabilityFlags;
 }
 
 export interface PermissionDecision {
@@ -212,6 +238,8 @@ export interface EpisodeRow {
 }
 
 // Layer 4: Semantic facts
+export type RecallPolicy = 'always' | 'on_topic' | 'manual_only' | 'never';
+export type TaskMemoryStatus = 'routine' | 'candidate' | 'promoted' | 'unimportant' | 'disabled';
 export type FactStatus = 'active' | 'superseded' | 'retracted';
 export interface FactRow {
   id: number;
@@ -233,6 +261,64 @@ export interface TaskRow {
   transcript_path?: string;
   summary?: string;
   raw_json: string;
+  memory_status: TaskMemoryStatus;
+  recall_policy: RecallPolicy;
+  promoted_summary_id?: number;
+  promoted_at?: number;
+  user_note?: string;
+}
+
+export interface ConversationSummaryRow {
+  id: number;
+  ts: number;
+  episode_start_id?: number;
+  episode_end_id?: number;
+  persona_id?: string;
+  title: string;
+  summary: string;
+  importance: number;
+  kind: string;
+  keywords_json: string;
+  entities_json: string;
+  created_at: number;
+  status?: string;
+  recall_policy?: RecallPolicy;
+}
+
+export type MemoryJobStatus = 'pending' | 'running' | 'done' | 'failed';
+
+export interface MemoryJobRow {
+  id: number;
+  type: string;
+  status: MemoryJobStatus;
+  dedupe_key?: string;
+  created_at: number;
+  started_at?: number;
+  finished_at?: number;
+  attempts: number;
+  payload_json: string;
+  result_json?: string;
+  error?: string;
+}
+
+export interface MemorySourceRow {
+  id: number;
+  memory_type: string;
+  memory_id: number;
+  source_type: string;
+  source_id: number;
+  excerpt?: string;
+  created_at: number;
+}
+
+export interface GraphSyncStateRow {
+  id: number;
+  source_type: string;
+  source_id: number;
+  neo4j_element_id?: string;
+  synced_at?: number;
+  status: string;
+  error?: string;
 }
 
 export interface MemoryStats {
@@ -240,5 +326,10 @@ export interface MemoryStats {
   facts: number;
   activeFacts: number;
   tasks: number;
+  summaries: number;
+  pendingMemoryJobs: number;
+  failedMemoryJobs: number;
+  graphSynced: number;
+  graphFailed: number;
   dbPath: string;
 }

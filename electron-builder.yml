@@ -16,6 +16,10 @@ extraResources:
     filter:
       - "**/*"
       - "!README.md"
+  - from: resources/portrait
+    to: portrait
+    filter:
+      - "**/*"
 asarUnpack:
   - "**/*.{node,dll}"
 win:

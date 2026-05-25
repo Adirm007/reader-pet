@@ -99,6 +99,12 @@ export async function chatGemini(
   const tools = toGeminiTools(req.tools);
   if (tools) body.tools = tools;
 
+  // Prefill — Gemini 支持末尾追加一条 model parts, 模型会从那里续写
+  if (req.prefill) {
+    contents.push({ role: 'model', parts: [{ text: req.prefill }] });
+    body.contents = contents;
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -130,7 +136,7 @@ export async function chatGemini(
     }
   }
   return {
-    text,
+    text: req.prefill && !text.startsWith(req.prefill) ? req.prefill + text : text,
     tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
     finish_reason: cand?.finishReason,
     usage: {

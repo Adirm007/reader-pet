@@ -3,39 +3,94 @@ import type { PetSpritePackage, PetState } from '../../../shared/types';
 
 interface Props {
   onClick?: () => void;
+  onDoubleClick?: () => void;
   pkg: PetSpritePackage | null;     // 为 null → 渲染 SVG 占位
   state: PetState;
   displayWidth: number;             // 屏幕上要画多大 (px)
+  fpsMultiplier?: number;           // 全局速度倍率 (默认 1.0)
+  draggable?: boolean;              // true: 走主进程手动拖动 (桌宠用); false: 纯点击 (设置面板预览用)
 }
 
 /**
  * 桌宠精灵图渲染器
  *
- * - 没装 pkg 时, 渲染原来的 SVG (银发紫眸 Q 版小人), 兼容旧行为
- * - 装了 pkg 时, 用一张精灵图 + background-position 切帧
- *   按 clip.fps 切列 (col), 按 state 切行 (row)
+ * 拖动: 不用 -webkit-app-region (它会吞掉所有鼠标事件, 导致 onClick 失效).
+ * 改成 mousedown→main:pet:startDrag, mouseup→main:pet:endDrag,
+ * 同时算位移; 位移 <5px 视为点击.
  *
- * 关键: 用 background-image 而不是 <img/canvas>, 因为
- *   1. transparent webp 直接走浏览器原生解码, 没额外消耗
- *   2. backgroundSize 可以精确放缩到我们想要的展示尺寸
- *   3. 切帧只改 backgroundPosition, 无 React 重渲染
+ * 双击: mouseup 时小位移就延迟 280ms 触发 onClick; 280ms 内再来一次就当 onDoubleClick.
+ * 这样开输入框 (单击) 和开面板 (双击) 不会互相打架.
  */
-export default function PetSprite({ onClick, pkg, state, displayWidth }: Props) {
-  const containerStyle: CSSProperties = {
-    WebkitAppRegion: 'drag'
-  } as CSSProperties;
+export default function PetSprite({
+  onClick,
+  onDoubleClick,
+  pkg,
+  state,
+  displayWidth,
+  fpsMultiplier,
+  draggable
+}: Props) {
+  const downPosRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const lastClickTsRef = useRef(0);
+  const pendingClickRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    downPosRef.current = { x: e.screenX, y: e.screenY, t: Date.now() };
+    if (draggable) void (window as any).api?.petStartDrag?.();
+  };
+  const handleMouseUp = (e: React.MouseEvent) => {
+    const start = downPosRef.current;
+    downPosRef.current = null;
+    if (draggable) void (window as any).api?.petEndDrag?.();
+    if (!start) return;
+    const dist = Math.abs(e.screenX - start.x) + Math.abs(e.screenY - start.y);
+    if (dist >= 5) return; // 算拖动, 不触发点击
+
+    const now = Date.now();
+    if (now - lastClickTsRef.current < 350 && onDoubleClick) {
+      // 双击 — 取消挂起的单击, 触发双击
+      if (pendingClickRef.current) {
+        clearTimeout(pendingClickRef.current);
+        pendingClickRef.current = null;
+      }
+      lastClickTsRef.current = 0;
+      onDoubleClick();
+      return;
+    }
+    lastClickTsRef.current = now;
+    if (onClick) {
+      if (onDoubleClick) {
+        // 有双击监听 — 延迟 280ms 触发单击, 给双击留检测窗口
+        pendingClickRef.current = setTimeout(() => {
+          pendingClickRef.current = null;
+          onClick();
+        }, 280);
+      } else {
+        onClick();
+      }
+    }
+  };
 
   if (!pkg) {
     return (
-      <div className="pet-sprite drag-handle" style={containerStyle} onClick={onClick}>
+      <div
+        className="pet-sprite drag-handle"
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+      >
         <FallbackSvg displayWidth={displayWidth} />
       </div>
     );
   }
 
   return (
-    <div className="pet-sprite drag-handle" style={containerStyle} onClick={onClick}>
-      <SpriteAtlasView pkg={pkg} state={state} displayWidth={displayWidth} />
+    <div
+      className="pet-sprite drag-handle"
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+    >
+      <SpriteAtlasView pkg={pkg} state={state} displayWidth={displayWidth} fpsMultiplier={fpsMultiplier ?? 1} />
     </div>
   );
 }
@@ -43,11 +98,13 @@ export default function PetSprite({ onClick, pkg, state, displayWidth }: Props) 
 function SpriteAtlasView({
   pkg,
   state,
-  displayWidth
+  displayWidth,
+  fpsMultiplier
 }: {
   pkg: PetSpritePackage;
   state: PetState;
   displayWidth: number;
+  fpsMultiplier: number;
 }) {
   const clip = pkg.clips[state] ?? pkg.clips.idle;
   const aspect = pkg.cellHeight / pkg.cellWidth;
@@ -70,7 +127,8 @@ function SpriteAtlasView({
   // 按 fps 推进帧
   useEffect(() => {
     if (clip.frames <= 1) return;
-    const interval = Math.max(40, Math.floor(1000 / Math.max(1, clip.fps)));
+    const effectiveFps = Math.max(0.5, clip.fps * Math.max(0.2, fpsMultiplier));
+    const interval = Math.max(40, Math.floor(1000 / effectiveFps));
     const loop = clip.loop !== false;
     const id = setInterval(() => {
       frameRef.current = frameRef.current + 1;
@@ -84,7 +142,7 @@ function SpriteAtlasView({
       setFrame(frameRef.current);
     }, interval);
     return () => clearInterval(id);
-  }, [clip.frames, clip.fps, clip.loop, pkg.id, state]);
+  }, [clip.frames, clip.fps, clip.loop, pkg.id, state, fpsMultiplier]);
 
   const style = useMemo<CSSProperties>(() => {
     return {
@@ -94,8 +152,7 @@ function SpriteAtlasView({
       backgroundRepeat: 'no-repeat',
       backgroundSize: `${sheetW}px ${sheetH}px`,
       backgroundPosition: `-${frame * w}px -${clip.row * h}px`,
-      imageRendering: 'auto',
-      WebkitAppRegion: 'no-drag'
+      imageRendering: 'auto'
     } as CSSProperties;
   }, [w, h, sheetW, sheetH, frame, clip.row, pkg.spritesheetDataUrl]);
 

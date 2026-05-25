@@ -8,9 +8,10 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'http';
 import { promises as fs } from 'fs';
 import { BrowserWindow } from 'electron';
 import { getConfig, getActiveProvider } from './config';
-import { buildSystemPrompt } from './personas-loader';
+import { buildSystemPrompt, INNER_MONOLOGUE_PREFILL, parseInnerMonologue } from './personas-loader';
 import { chat as providerChat } from './providers';
 import { appendTask } from './memory/store';
+import { recordMonologue } from './inner-monologue-log';
 import type { TaskReport, ChatMessage } from '../shared/types';
 
 let server: Server | null = null;
@@ -82,8 +83,25 @@ async function generatePersonaSummary(rawAssistantText: string): Promise<string>
     }
   ];
   try {
-    const resp = await providerChat(provider, { messages, maxTokens: 200, temperature: 0.85 });
-    return resp.text.trim();
+    const resp = await providerChat(provider, {
+      messages,
+      maxTokens: 30000,          // 不限制思考长度
+      temperature: 0.85,
+      prefill: INNER_MONOLOGUE_PREFILL
+    });
+    const { monologue, dialog } = parseInnerMonologue(resp.text);
+    recordMonologue({
+      ts: Date.now(),
+      source: 'task-report',
+      persona: cfg.activePersonaId,
+      provider: provider.id,
+      model: provider.model,
+      trigger: 'Claude Code 任务完成: ' + rawAssistantText.slice(0, 200),
+      monologue,
+      dialog,
+      outputTokens: resp.usage?.outputTokens
+    });
+    return dialog;
   } catch (e: any) {
     return `(汇报生成失败: ${e?.message ?? e})`;
   }

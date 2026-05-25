@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppConfig, CapabilityDescriptor } from '../../../../shared/types';
+import type { AppConfig, CapabilityDescriptor, CapabilityStatus } from '../../../../shared/types';
 
 const COUNTDOWN_SECONDS = 10;
 
@@ -14,19 +14,16 @@ export default function SafetySection({
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
   const [phase, setPhase] = useState<'reading' | 'first-confirm' | 'second-confirm'>('reading');
   const [caps, setCaps] = useState<CapabilityDescriptor[]>([]);
-  const [pwInstalled, setPwInstalled] = useState(false);
-  const [memInstalled, setMemInstalled] = useState(false);
+  const [statuses, setStatuses] = useState<Record<string, CapabilityStatus>>({});
   const timerRef = useRef<number | null>(null);
 
   const refreshExtras = async () => {
-    const [c, pw, mem] = await Promise.all([
+    const [c, s] = await Promise.all([
       window.api.listCapabilities(),
-      window.api.isPlaywrightInstalled(),
-      window.api.isMemoryRWInstalled()
+      window.api.listCapabilityStatuses()
     ]);
     setCaps(c);
-    setPwInstalled(pw);
-    setMemInstalled(mem);
+    setStatuses(Object.fromEntries(s.map((item) => [item.id, item])));
   };
 
   useEffect(() => {
@@ -131,7 +128,7 @@ export default function SafetySection({
               <td><span className={`risk risk-${c.risk_level}`}>{c.risk_level}</span></td>
               <td>{c.available_in_safe ? '✔' : '—'}</td>
               <td>{c.available_in_danger ? (c.requires_extra_enable ? '需勾选' : '✔') : '—'}</td>
-              <td>{availLabel(c, cfg)}</td>
+              <td>{availLabel(c, cfg, statuses[c.id])}</td>
             </tr>
           ))}
         </tbody>
@@ -150,7 +147,7 @@ export default function SafetySection({
         />
         启用浏览器自动化 (Playwright){' '}
         <span className="muted" style={{ fontSize: 12 }}>
-          {pwInstalled ? '· 已安装' : '· 未安装 (运行时调用会报错)'}
+          · {statuses.browser?.message ?? '状态未知'}
         </span>
       </label>
       <label className="checkbox-row">
@@ -162,7 +159,7 @@ export default function SafetySection({
         />
         启用游戏内存读写 (memoryjs · 仅 Windows){' '}
         <span className="muted" style={{ fontSize: 12 }}>
-          {memInstalled ? '· 已安装' : '· 未安装'}
+          · {statuses.memory_rw?.message ?? '状态未知'}
         </span>
       </label>
 
@@ -229,16 +226,21 @@ export default function SafetySection({
   );
 }
 
-function availLabel(c: CapabilityDescriptor, cfg: AppConfig): string {
+function availLabel(c: CapabilityDescriptor, cfg: AppConfig, status?: CapabilityStatus): string {
   const isDanger = cfg.safetyMode === 'danger';
-  if (c.id === 'browser') {
+  if (c.enable_flag) {
     if (!isDanger) return '禁用';
-    return cfg.capabilities.playwrightEnabled ? '已启用' : '可用但未勾选';
+    return cfg.capabilities[c.enable_flag] ? statusLabel(status) : '可用但未勾选';
   }
-  if (c.id === 'memory_rw') {
-    if (!isDanger) return '禁用';
-    return cfg.capabilities.memoryRWEnabled ? '已启用' : '可用但未勾选';
-  }
-  if (isDanger || c.available_in_safe) return '可用';
+  if (isDanger || c.available_in_safe) return statusLabel(status);
   return '禁用';
+}
+
+function statusLabel(status?: CapabilityStatus): string {
+  if (!status) return '可用';
+  if (status.status === 'available') return status.message ? `可用 · ${status.message}` : '可用';
+  if (status.status === 'not_installed') return status.message ?? '未安装';
+  if (status.status === 'disabled') return status.message ?? '禁用';
+  if (status.status === 'blocked') return status.message ?? '阻止';
+  return status.message ?? '不可用';
 }

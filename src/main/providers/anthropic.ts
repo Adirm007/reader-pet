@@ -102,6 +102,13 @@ export async function chatAnthropic(
   const tools = toAnthropicTools(req.tools);
   if (tools) body.tools = tools;
 
+  // Prefill — Anthropic 原生: 末尾追加 assistant 块, 模型从中续写
+  // 注意尾随空格会被 API 拒绝; 调用方需自己保证 prefill 不以空格结尾
+  if (req.prefill) {
+    list.push({ role: 'assistant', content: [{ type: 'text', text: req.prefill }] });
+    body.messages = list;
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -136,7 +143,7 @@ export async function chatAnthropic(
     }
   }
   return {
-    text,
+    text: req.prefill ? req.prefill + text : text,
     tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
     finish_reason: data.stop_reason,
     usage: {

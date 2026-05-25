@@ -28,9 +28,15 @@ export async function chatOpenAICompatible(
   req: ChatRequest
 ): Promise<ChatResponse> {
   const url = `${trimSlash(cfg.baseUrl)}/chat/completions`;
+  const messages = req.messages.map(serializeMessage);
+  // Prefill — OAI 协议没标准化, 但实测大多兼容端 (DeepSeek/Qwen/智谱/Moonshot/Ollama/LM Studio)
+  // 会把"末尾 assistant 消息"当作前缀续写. DeepSeek 额外认 prefix:true (无害于其它端).
+  if (req.prefill) {
+    messages.push({ role: 'assistant', content: req.prefill, prefix: true });
+  }
   const body: any = {
     model: cfg.model,
-    messages: req.messages.map(serializeMessage),
+    messages,
     max_tokens: req.maxTokens ?? 800,
     temperature: req.temperature ?? 0.8,
     stream: false
@@ -57,6 +63,8 @@ export async function chatOpenAICompatible(
   const msg = choice?.message ?? {};
   const text: string = msg.content ?? '';
   const tool_calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : undefined;
+  // 不在此处拼回 prefill — 上层 stripInnerMonologue 已能处理"只剩闭合 tag"的 DeepSeek 续写格式,
+  // 也能处理"完全没 tag"的非续写型服务器. 主动拼回反而会在不支持 prefix 的服务器上制造畸形输出.
   return {
     text,
     tool_calls,

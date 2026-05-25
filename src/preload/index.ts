@@ -3,15 +3,22 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppConfig,
   CapabilityDescriptor,
+  CapabilityStatus,
   ChatResponse,
+  ConversationSummaryRow,
   EpisodeRow,
   FactRow,
   FactStatus,
+  MemoryJobRow,
+  MemoryJobStatus,
+  MemorySourceRow,
   MemoryStats,
   PersonaMeta,
   PetSpritePackage,
   ProviderConfig,
+  RecallPolicy,
   SafetyMode,
+  TaskMemoryStatus,
   TaskRow
 } from '../shared/types';
 
@@ -45,10 +52,16 @@ const api = {
   openSettings: () => ipcRenderer.invoke('settings:open'),
   closeSettings: () => ipcRenderer.invoke('settings:close'),
   reloadPetWindow: () => ipcRenderer.invoke('window:reload-pet'),
+  petStartDrag: () => ipcRenderer.invoke('pet:startDrag'),
+  petEndDrag: () => ipcRenderer.invoke('pet:endDrag'),
 
   // 能力
   listCapabilities: (): Promise<CapabilityDescriptor[]> =>
     ipcRenderer.invoke('capabilities:list'),
+  listCapabilityStatuses: (): Promise<CapabilityStatus[]> =>
+    ipcRenderer.invoke('capabilities:statuses'),
+  emergencyStop: (): Promise<{ ok: boolean; stopped: string[]; errors: Array<{ id: string; error: string }> }> =>
+    ipcRenderer.invoke('capabilities:emergencyStop'),
   isPlaywrightInstalled: (): Promise<boolean> =>
     ipcRenderer.invoke('capabilities:isPlaywrightInstalled'),
   isMemoryRWInstalled: (): Promise<boolean> =>
@@ -92,6 +105,30 @@ const api = {
   memDeleteFact: (id: number): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('mem:deleteFact', id),
   memListTasks: (limit: number): Promise<TaskRow[]> => ipcRenderer.invoke('mem:listTasks', limit),
+  memUpdateTaskMemoryState: (
+    id: number,
+    patch: { memory_status?: TaskMemoryStatus; recall_policy?: RecallPolicy; user_note?: string }
+  ): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:updateTaskMemoryState', id, patch),
+  memPromoteTaskToMemory: (
+    id: number,
+    opts?: { title?: string; summary?: string; importance?: number; recall_policy?: RecallPolicy }
+  ): Promise<{ ok: boolean; summaryId: number }> => ipcRenderer.invoke('mem:promoteTaskToMemory', id, opts),
+  memListSources: (memoryType: string, memoryId: number): Promise<MemorySourceRow[]> =>
+    ipcRenderer.invoke('mem:listSources', memoryType, memoryId),
+  memGraphTestConnection: (): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke('mem:graphTestConnection'),
+  memGraphStats: (): Promise<{
+    ok: boolean;
+    nodes?: number;
+    relationships?: number;
+    message?: string;
+  }> => ipcRenderer.invoke('mem:graphStats'),
+  memListSummaries: (limit?: number, query?: string): Promise<ConversationSummaryRow[]> =>
+    ipcRenderer.invoke('mem:listSummaries', limit, query),
+  memListJobs: (status?: MemoryJobStatus, limit?: number): Promise<MemoryJobRow[]> =>
+    ipcRenderer.invoke('mem:listJobs', status, limit),
+  memRetryJob: (id: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:retryJob', id),
+  memKickDigestion: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:kickDigestion'),
 
   // 主动行为
   triggerLetter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>
@@ -124,7 +161,27 @@ const api = {
     ipcRenderer.invoke('petSprite:list'),
   petSpriteLoad: (id: string): Promise<PetSpritePackage | null> =>
     ipcRenderer.invoke('petSprite:load', id),
-  petSpriteOpenUserDir: (): Promise<string> => ipcRenderer.invoke('petSprite:openUserDir')
+  petSpriteOpenUserDir: (): Promise<string> => ipcRenderer.invoke('petSprite:openUserDir'),
+
+  // 内心独白 (默认对用户隐藏, 主动调出来看)
+  innerMonologueList: (
+    limit?: number
+  ): Promise<
+    Array<{
+      ts: number;
+      source: 'chat' | 'chatter' | 'letter' | 'task-report';
+      persona: string;
+      provider: string;
+      model: string;
+      trigger?: string;
+      monologue: string;
+      dialog: string;
+      outputTokens?: number;
+    }>
+  > => ipcRenderer.invoke('innerMonologue:list', limit),
+  innerMonologueClear: (): Promise<boolean> => ipcRenderer.invoke('innerMonologue:clear'),
+  innerMonologueOpenLogFile: (): Promise<string> =>
+    ipcRenderer.invoke('innerMonologue:openLogFile')
 };
 
 contextBridge.exposeInMainWorld('api', api);
