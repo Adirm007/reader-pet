@@ -149,7 +149,7 @@ Reader Pet 可以和 Claude Code 协作：
 
 危险模式是给个人自用场景准备的高权限模式。它可以造成文件损坏、配置覆盖、隐私泄漏、误执行命令、杀软警报等后果。除非完全理解自己在做什么否则不要开启。
 
-当前 registry 已有 emergency stop skeleton，但只有实现了 `stop()` 的 Adapter 才能被真正中断。长期运行的 MAA、桌面自动化、视频观察等能力接入时必须实现 stop hook。
+emergency stop 已接入设置页按钮与 Adapter `stop()` 调用链。当前 MAA、CLI-Anything、MCP、浏览器 MCP、屏幕观察、内存扫描等能力已提供停止逻辑；桌面自动化仍是 scaffold，`stop()` 暂为空实现。后续新增长期运行能力（例如完整桌面自动化、视频观察）时必须实现真实 stop hook。
 
 ### TTS
 
@@ -297,7 +297,7 @@ resources/                 打包资源、精灵图、立绘等
 - CLI-Anything：已接入结构化外部 CLI Adapter scaffold；后续验证真实工具协议是否稳定
 - MCP 长期插件标准：已接入 stdio MCP server / tool 调用地基；后续补插件配置 UI 与低风险 allowlist
 - 桌面自动化：已接入 Adapter scaffold；后续选择具体 provider 并实现动作队列
-- emergency stop：已接入设置页按钮与 Adapter stop hook；后续补全所有长任务的运行态可视化
+- emergency stop：已接入设置页按钮与 Adapter `stop()` 调用链；后续补全所有长任务的真实 stop hook 与运行态可视化
 
 ## 许可证
 
