@@ -314,6 +314,8 @@ export interface TaskReport {
 }
 
 // ============ 记忆系统 ============
+export type MemoryScope = 'global' | 'persona' | 'project';
+
 // Layer 3: Episode log
 export interface EpisodeRow {
   id: number;
@@ -322,6 +324,8 @@ export interface EpisodeRow {
   content: string;
   persona_id: string;
   session_id?: string;
+  scope?: MemoryScope;
+  project_id?: string;
 }
 
 // Layer 4: Semantic facts
@@ -338,7 +342,14 @@ export interface FactRow {
   confidence: number;      // 0~1
   status: FactStatus;
   cardinality: FactCardinality;
+  scope: MemoryScope;
+  persona_id?: string;
+  project_id?: string;
+  recall_policy: RecallPolicy;
   created_at: number;
+  updated_at?: number;
+  last_used_at?: number;
+  use_count: number;
   superseded_by?: number;
   source_episode_id?: number;
 }
@@ -364,6 +375,8 @@ export interface ConversationSummaryRow {
   episode_start_id?: number;
   episode_end_id?: number;
   persona_id?: string;
+  scope?: MemoryScope;
+  project_id?: string;
   title: string;
   summary: string;
   importance: number;
@@ -371,6 +384,9 @@ export interface ConversationSummaryRow {
   keywords_json: string;
   entities_json: string;
   created_at: number;
+  updated_at?: number;
+  last_used_at?: number;
+  use_count?: number;
   status?: string;
   recall_policy?: RecallPolicy;
 }

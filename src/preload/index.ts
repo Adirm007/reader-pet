@@ -11,6 +11,7 @@ import type {
   FactRow,
   FactStatus,
   MemoryJobRow,
+  MemoryScope,
   MemoryJobStatus,
   MemorySourceRow,
   MemoryStats,
@@ -112,17 +113,23 @@ const api = {
   memStats: (): Promise<MemoryStats> => ipcRenderer.invoke('mem:stats'),
   memRecentEpisodes: (limit: number, persona?: string): Promise<EpisodeRow[]> =>
     ipcRenderer.invoke('mem:recentEpisodes', limit, persona),
-  memSearchEpisodes: (q: string, limit: number): Promise<EpisodeRow[]> =>
-    ipcRenderer.invoke('mem:searchEpisodes', q, limit),
-  memListFacts: (status?: FactStatus, limit?: number): Promise<FactRow[]> =>
-    ipcRenderer.invoke('mem:listFacts', status, limit),
+  memSearchEpisodes: (q: string, limit: number, opts?: { personaId?: string; projectId?: string }): Promise<EpisodeRow[]> =>
+    ipcRenderer.invoke('mem:searchEpisodes', q, limit, opts),
+  memListFacts: (filter?: { status?: FactStatus; scope?: MemoryScope; personaId?: string; projectId?: string; query?: string; limit?: number } | FactStatus, limit?: number): Promise<FactRow[]> =>
+    ipcRenderer.invoke('mem:listFacts', filter, limit),
   memUpsertFact: (row: {
     predicate: string;
     subject: string;
     object: string;
     confidence?: number;
+    scope?: MemoryScope;
+    persona_id?: string;
+    project_id?: string;
+    recall_policy?: RecallPolicy;
   }): Promise<{ id: number; supersededId?: number }> =>
     ipcRenderer.invoke('mem:upsertFact', row),
+  memUpdateFact: (id: number, patch: Partial<Pick<FactRow, 'predicate' | 'subject' | 'object' | 'confidence' | 'status' | 'cardinality' | 'scope' | 'persona_id' | 'project_id' | 'recall_policy'>>): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('mem:updateFact', id, patch),
   memSetFactStatus: (id: number, status: FactStatus): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('mem:setFactStatus', id, status),
   memDeleteFact: (id: number): Promise<{ ok: boolean }> =>
@@ -148,10 +155,14 @@ const api = {
   }> => ipcRenderer.invoke('mem:graphStats'),
   memListSummaries: (limit?: number, query?: string): Promise<ConversationSummaryRow[]> =>
     ipcRenderer.invoke('mem:listSummaries', limit, query),
+  memDeleteSummary: (id: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:deleteSummary', id),
+  memDeleteEpisodeCascade: (id: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:deleteEpisodeCascade', id),
   memListJobs: (status?: MemoryJobStatus, limit?: number): Promise<MemoryJobRow[]> =>
     ipcRenderer.invoke('mem:listJobs', status, limit),
   memRetryJob: (id: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:retryJob', id),
   memKickDigestion: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:kickDigestion'),
+  memEnqueueMissingDailyDigests: (localDay?: string): Promise<{ ok: boolean; localDay: string; enqueued: number; ranges: Array<{ episodeStartId: number; episodeEndId: number }> }> =>
+    ipcRenderer.invoke('mem:enqueueMissingDailyDigests', localDay),
   memBackfillEmbeddings: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:backfillEmbeddings'),
 
   // 主动行为

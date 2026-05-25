@@ -78,11 +78,13 @@ Live2D `.model3.json` 目前还没有接入，只预留了配置槽。
 额外包含：
 
 - conversation summaries（带 `status` 与 `recall_policy`，聊天召回只取 active + always/on_topic）
+- daily digest：按 episode range 覆盖情况补写日记式摘要，不用“今天是否写过”这种粗粒度 flag
+- important digest：每轮默认只写 episode；只有命中“记住 / 别忘 / 以后 / 不要再 / 你记错了 / 这很重要 / 称呼与边界变化”等本地触发时，才即时整理长期事实或重要摘要
 - memory jobs（有限退避自动重试 30s/2m/10m，启动时回收 stale running，避免卡死）
 - memory sources（每条长期记忆都可追溯到原始 episode/任务来源）
 - graph sync state
 - 可选 Neo4j 图记忆写入 / 召回
-- 可选 digestion worker，用当前 Provider 做摘要与事实抽取
+- 可选 digestion worker，用当前 Provider 做 daily / important 摘要与事实抽取；开启后也不会把每轮普通对话都送去 digest
 - 可选 embedding 向量索引与向量召回：
   - 单独配置 embedding provider + model（默认复用激活 Provider）
   - SQLite BLOB 存归一化向量，JS 余弦扫描，不引入原生依赖
@@ -94,8 +96,9 @@ Live2D `.model3.json` 目前还没有接入，只预留了配置槽。
   - 支持自定义 URL、API Key、model、top K 与最低精排分数
   - 召回上下文会同时标出 rerank score 与 vector score，便于调试
 - 聊天召回是 intent-aware：显式回忆 / 任务相关 / 个人事实 / 寒暄等不同意图走不同召回路径，避免无脑塞 30 条事实
+- facts、summaries、vector recall 与 episode search 会按 global / persona / project scope 过滤，避免不同人格或项目的记忆串线
 
-Neo4j、digestion、embedding、向量召回、Reranker 精排均默认关闭，需要时在设置页打开。
+Neo4j、digestion、embedding、向量召回、Reranker 精排均默认关闭，需要时在设置页打开。记忆设置页支持手动“检查并补写日记摘要”，它只会为未覆盖的 episode range 入队 daily digest，不会删除原始历史。
 
 ### Claude Code 集成
 
@@ -403,6 +406,7 @@ MCP 插件默认视为高风险本机能力：
 - MCP 长期插件标准：已支持 stdio / HTTP server 配置、tools、resources、prompts、tool allowlist、运行协议、安全边界与插件开发检查清单；后续再评估 OAuth、streaming、sampling 与更细的 server 管理
 - 桌面自动化：已接入 PowerShell provider MVP 与 JSON 动作队列，支持 dry-run / run / stop；后续再评估 nutjs、窗口选择、图像识别和更安全的动作确认
 - emergency stop：已接入设置页按钮、运行态可视化与 Adapter `stop()` 调用链；后续补全新增长任务的真实 stop hook
+- 记忆写入工作流：已改为每轮只写 episode，重大内容走 important digest，本地未覆盖历史走 daily digest range 补写；后续再做隐藏候选、待复核视图和更严格的图谱召回隔离
 
 ## 许可证
 

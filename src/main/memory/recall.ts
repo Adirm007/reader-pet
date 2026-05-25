@@ -2,9 +2,10 @@ import { getConfig } from '../config';
 import {
   getConversationSummaryById,
   getDbFactById,
-  listFacts,
   listRecallableConversationSummaries,
+  listRecallableFacts,
   listRecallableTasks,
+  markMemoryUsed,
   searchEpisodes
 } from './store';
 import { recallGraphContext } from './graph';
@@ -56,6 +57,43 @@ function compactQuery(input: string): string {
   return input.replace(/[?？。！!，,、]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
+function normalizeForSearch(text: string): string {
+  return text.toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, ' ').trim();
+}
+
+function chineseBigrams(text: string): Set<string> {
+  const chars = [...text.replace(/[^\p{Script=Han}]/gu, '')];
+  const grams = new Set<string>();
+  for (let i = 0; i < chars.length - 1; i++) grams.add(`${chars[i]}${chars[i + 1]}`);
+  return grams;
+}
+
+function lexicalScore(query: string, text: string): number {
+  const q = normalizeForSearch(query);
+  const t = normalizeForSearch(text);
+  if (!q || !t) return 0;
+  let score = t.includes(q) ? 1 : 0;
+  const qGrams = chineseBigrams(q);
+  if (qGrams.size) {
+    const tGrams = chineseBigrams(t);
+    let hits = 0;
+    for (const gram of qGrams) if (tGrams.has(gram)) hits++;
+    score = Math.max(score, hits / qGrams.size);
+  }
+  const tokens = q.split(/\s+/).filter((token) => token.length > 1);
+  if (tokens.length) {
+    const hits = tokens.filter((token) => t.includes(token)).length;
+    score = Math.max(score, hits / tokens.length);
+  }
+  return score;
+}
+
+function scopeBoost(scope?: string): number {
+  if (scope === 'project') return 1;
+  if (scope === 'persona') return 0.8;
+  return 0.5;
+}
+
 function analyzeRecallIntent(input: string) {
   const trimmed = input.trim();
   const explicitRecall = includesAny(trimmed, RECALL_TRIGGERS);
@@ -85,8 +123,21 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
   const summaryIds = new Set<number>();
 
   try {
-    for (const f of listFacts({ status: 'active', limit: 12 })) {
-      factMap.set(f.id, { predicate: f.subject === 'user' ? f.predicate : `${f.subject}.${f.predicate}`, object: f.object });
+    const policies = intent.shouldUseDeepRecall ? ['always', 'on_topic'] as const : ['always'] as const;
+    const candidates = listRecallableFacts({ personaId: input.personaId, policies: [...policies], limit: 120 });
+    const scored = candidates
+      .map((f) => {
+        const text = `${f.subject} ${f.predicate} ${f.object}`;
+        const relevance = intent.shouldUseDeepRecall ? lexicalScore(intent.query, text) : 0;
+        const recency = Math.min(1, (f.updated_at ?? f.created_at ?? 0) / Math.max(1, Date.now()));
+        const usage = Math.min(1, Math.log1p(f.use_count ?? 0) / 5);
+        return { fact: f, score: relevance * 0.55 + scopeBoost(f.scope) * 0.25 + recency * 0.1 + usage * 0.1 };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, intent.shouldUseDeepRecall ? 12 : 6);
+    for (const { fact } of scored) {
+      factMap.set(fact.id, { predicate: fact.subject === 'user' ? fact.predicate : `${fact.subject}.${fact.predicate}`, object: fact.object });
+      markMemoryUsed('fact', fact.id);
     }
   } catch {
     /* ignore */
@@ -108,7 +159,8 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
     try {
       const vectorHits = await searchVectorMemories(intent.query, {
         limit: cfg.vectorRecallLimit,
-        minScore: cfg.vectorMinScore
+        minScore: cfg.vectorMinScore,
+        personaId: input.personaId
       });
       const candidates = vectorHits.map((hit) => ({
         item: hit,
@@ -126,12 +178,14 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
           const fact = getDbFactById(hit.memoryId);
           if (fact?.status === 'active') {
             factMap.set(fact.id, { predicate: fact.subject === 'user' ? fact.predicate : `${fact.subject}.${fact.predicate}`, object: fact.object });
+            markMemoryUsed('fact', fact.id);
             vectorLines.push(`- fact #${fact.id} (${scoreText}) ${fact.subject}.${fact.predicate}: ${fact.object}`);
           }
         } else {
           const summary = getConversationSummaryById(hit.memoryId);
           if (summary && (summary.status ?? 'active') === 'active' && summary.recall_policy !== 'never' && summary.recall_policy !== 'manual_only' && !summaryIds.has(summary.id)) {
             summaryIds.add(summary.id);
+            markMemoryUsed('conversation_summary', summary.id);
             vectorLines.push(`- summary #${summary.id} (${scoreText}) ${summary.title}: ${summary.summary.slice(0, 220)}`);
           }
         }
@@ -147,13 +201,14 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
 
   try {
     const summaries = intent.shouldUseDeepRecall
-      ? listRecallableConversationSummaries({ query: intent.query, limit: 5 })
-      : listRecallableConversationSummaries({ limit: 3, alwaysOnly: true });
+      ? listRecallableConversationSummaries({ query: intent.query, limit: 5, personaId: input.personaId })
+      : listRecallableConversationSummaries({ limit: 3, alwaysOnly: true, personaId: input.personaId });
     const summaryLines = summaries
       .filter((s) => !summaryIds.has(s.id))
       .slice(0, 5)
       .map((s) => {
         summaryIds.add(s.id);
+        markMemoryUsed('conversation_summary', s.id);
         return `- summary #${s.id} ${s.title}: ${s.summary.slice(0, 240)} (episode ${s.episode_start_id ?? '?'}-${s.episode_end_id ?? '?'})`;
       });
     if (summaryLines.length) {
@@ -178,7 +233,7 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
 
   if (intent.explicitRecall) {
     try {
-      const episodes = searchEpisodes(intent.query, 2);
+      const episodes = searchEpisodes(intent.query, 2, { personaId: input.personaId });
       if (episodes.length) {
         lines.push('### 可引用的历史片段');
         lines.push(...episodes.map((e) => `- episode #${e.id} ${e.role}: ${e.content.slice(0, 220)}`));

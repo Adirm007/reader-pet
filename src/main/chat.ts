@@ -6,7 +6,7 @@ import { chat as providerChat } from './providers';
 import { TOOL_DEFINITIONS, callTool } from './tools';
 import { appendEpisode } from './memory/store';
 import { buildMemoryContext } from './memory/recall';
-import { enqueueDigestEpisodePair, kickMemoryWorker } from './memory/jobs';
+import { detectImportantTrigger, enqueueDigestImportantEpisodePair, kickMemoryWorker } from './memory/jobs';
 import { noteUserInteraction } from './proactive';
 import { recordMonologue } from './inner-monologue-log';
 import type { ChatMessage, ChatResponse } from '../shared/types';
@@ -130,12 +130,16 @@ export async function sendChat(userInput: string): Promise<ChatResponse> {
 
   try {
     if (sourceEpisodeId && assistantEpisodeId && cfg.memory.digestionEnabled) {
-      enqueueDigestEpisodePair({
-        userEpisodeId: sourceEpisodeId,
-        assistantEpisodeId,
-        personaId: cfg.activePersonaId
-      });
-      kickMemoryWorker();
+      const triggerKind = detectImportantTrigger(userInput);
+      if (triggerKind) {
+        enqueueDigestImportantEpisodePair({
+          userEpisodeId: sourceEpisodeId,
+          assistantEpisodeId,
+          personaId: cfg.activePersonaId,
+          triggerKind
+        });
+        kickMemoryWorker();
+      }
     }
   } catch {
     // 后台整理失败不影响主流程

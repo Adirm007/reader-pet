@@ -62,7 +62,14 @@ function buildSummaryText(summary: ConversationSummaryRow): string {
 }
 
 function buildFactText(fact: FactRow): string {
-  return `事实: ${fact.subject} 的 ${fact.predicate} 是 ${fact.object}`;
+  return `事实(${fact.scope ?? 'global'}/${fact.recall_policy ?? 'on_topic'}): ${fact.subject} 的 ${fact.predicate} 是 ${fact.object}`;
+}
+
+function isVisible(scope: string | undefined, personaId?: string, projectId?: string, memoryPersonaId?: string, memoryProjectId?: string) {
+  if (!scope || scope === 'global') return true;
+  if (scope === 'persona') return !!personaId && memoryPersonaId === personaId;
+  if (scope === 'project') return !!projectId && memoryProjectId === projectId;
+  return false;
 }
 
 export function buildMemoryEmbeddingText(memoryType: EmbeddableMemoryType, row: ConversationSummaryRow | FactRow): string {
@@ -119,7 +126,7 @@ export async function embedMissingMemories(): Promise<{ processed: number; embed
   return { processed: items.length, embedded };
 }
 
-export async function searchVectorMemories(query: string, opts?: { limit?: number; minScore?: number }): Promise<Array<{
+export async function searchVectorMemories(query: string, opts?: { limit?: number; minScore?: number; personaId?: string; projectId?: string }): Promise<Array<{
   memoryType: EmbeddableMemoryType;
   memoryId: number;
   score: number;
@@ -145,6 +152,14 @@ export async function searchVectorMemories(query: string, opts?: { limit?: numbe
       text: row.source_text
     }))
     .filter((hit) => hit.score >= minScore)
+    .filter((hit) => {
+      if (hit.memoryType === 'fact') {
+        const fact = getDbFactById(hit.memoryId);
+        return !!fact && fact.status === 'active' && !['manual_only', 'never'].includes(fact.recall_policy ?? 'on_topic') && isVisible(fact.scope, opts?.personaId, opts?.projectId, fact.persona_id, fact.project_id);
+      }
+      const summary = getConversationSummaryById(hit.memoryId);
+      return !!summary && (summary.status ?? 'active') === 'active' && !['manual_only', 'never'].includes(summary.recall_policy ?? 'on_topic') && isVisible(summary.scope, opts?.personaId, opts?.projectId, summary.persona_id, summary.project_id);
+    })
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 }

@@ -35,7 +35,10 @@ import {
   listFacts,
   upsertFact,
   setFactStatus,
+  updateFact,
   deleteFact,
+  deleteConversationSummary,
+  deleteEpisodeCascade,
   listTasks,
   getMemoryStats,
   listConversationSummaries,
@@ -47,9 +50,9 @@ import {
   enqueueMemoryJob
 } from './memory/store';
 import { testGraphConnection, getGraphStats } from './memory/neo4j-client';
-import { kickMemoryWorker } from './memory/jobs';
+import { enqueueMissingDailyDigests, kickMemoryWorker } from './memory/jobs';
 import { listMonologues, clearMonologues, getLogFilePath } from './inner-monologue-log';
-import type { ProviderConfig, SafetyMode, FactStatus, MemoryJobStatus, RecallPolicy, TaskMemoryStatus } from '../shared/types';
+import type { ProviderConfig, SafetyMode, FactStatus, MemoryJobStatus, MemoryScope, RecallPolicy, TaskMemoryStatus } from '../shared/types';
 
 export function registerIpc(
   getSettingsWindow: () => BrowserWindow | null,
@@ -163,11 +166,16 @@ export function registerIpc(
   ipcMain.handle('mem:recentEpisodes', (_, limit: number, persona?: string) =>
     recentEpisodes(limit, persona)
   );
-  ipcMain.handle('mem:searchEpisodes', (_, q: string, limit: number) => searchEpisodes(q, limit));
-  ipcMain.handle('mem:listFacts', (_, status?: FactStatus, limit?: number) =>
-    listFacts({ status, limit })
-  );
+  ipcMain.handle('mem:searchEpisodes', (_, q: string, limit: number, opts?: { personaId?: string; projectId?: string }) => searchEpisodes(q, limit, opts));
+  ipcMain.handle('mem:listFacts', (_, filter?: { status?: FactStatus; scope?: MemoryScope; personaId?: string; projectId?: string; query?: string; limit?: number } | FactStatus, limit?: number) => {
+    if (typeof filter === 'string') return listFacts({ status: filter, limit });
+    return listFacts(filter ?? { limit });
+  });
   ipcMain.handle('mem:upsertFact', (_, row: any) => upsertFact(row));
+  ipcMain.handle('mem:updateFact', (_, id: number, patch: any) => {
+    updateFact(id, patch);
+    return { ok: true };
+  });
   ipcMain.handle('mem:setFactStatus', (_, id: number, status: FactStatus) => {
     setFactStatus(id, status);
     return { ok: true };
@@ -192,6 +200,14 @@ export function registerIpc(
   ipcMain.handle('mem:listSummaries', (_, limit?: number, query?: string) =>
     listConversationSummaries({ limit, query })
   );
+  ipcMain.handle('mem:deleteSummary', (_, id: number) => {
+    deleteConversationSummary(id);
+    return { ok: true };
+  });
+  ipcMain.handle('mem:deleteEpisodeCascade', (_, id: number) => {
+    deleteEpisodeCascade(id);
+    return { ok: true };
+  });
   ipcMain.handle('mem:listJobs', (_, status?: MemoryJobStatus, limit?: number) =>
     listMemoryJobs({ status, limit })
   );
@@ -203,6 +219,14 @@ export function registerIpc(
   ipcMain.handle('mem:kickDigestion', () => {
     kickMemoryWorker();
     return { ok: true };
+  });
+  ipcMain.handle('mem:enqueueMissingDailyDigests', (_, localDay?: string) => {
+    const day = typeof localDay === 'string' && localDay.trim()
+      ? localDay.trim()
+      : new Date().toLocaleDateString('en-CA');
+    const result = enqueueMissingDailyDigests({ personaId: getConfig().activePersonaId, localDay: day });
+    kickMemoryWorker();
+    return { ok: true, localDay: day, ...result };
   });
   ipcMain.handle('mem:backfillEmbeddings', () => {
     enqueueMemoryJob({

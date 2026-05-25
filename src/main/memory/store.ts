@@ -21,6 +21,7 @@ import type {
   MemoryEmbeddingRow,
   MemoryJobRow,
   MemoryJobStatus,
+  MemoryScope,
   MemorySourceRow,
   RecallPolicy,
   TaskMemoryStatus,
@@ -173,7 +174,16 @@ function initSchema(db: Database.Database) {
       ON memory_embeddings(memory_type, model);
   `);
 
+  ensureColumn(db, 'episodes', 'scope', `TEXT NOT NULL DEFAULT 'persona'`);
+  ensureColumn(db, 'episodes', 'project_id', 'TEXT');
   ensureColumn(db, 'facts', 'cardinality', `TEXT NOT NULL DEFAULT 'single'`);
+  ensureColumn(db, 'facts', 'scope', `TEXT NOT NULL DEFAULT 'global'`);
+  ensureColumn(db, 'facts', 'persona_id', 'TEXT');
+  ensureColumn(db, 'facts', 'project_id', 'TEXT');
+  ensureColumn(db, 'facts', 'recall_policy', `TEXT NOT NULL DEFAULT 'on_topic'`);
+  ensureColumn(db, 'facts', 'updated_at', 'INTEGER');
+  ensureColumn(db, 'facts', 'last_used_at', 'INTEGER');
+  ensureColumn(db, 'facts', 'use_count', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'tasks', 'memory_status', `TEXT NOT NULL DEFAULT 'routine'`);
   ensureColumn(db, 'tasks', 'recall_policy', `TEXT NOT NULL DEFAULT 'manual_only'`);
   ensureColumn(db, 'tasks', 'promoted_summary_id', 'INTEGER');
@@ -181,6 +191,12 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'tasks', 'user_note', 'TEXT');
   ensureColumn(db, 'conversation_summaries', 'status', `TEXT NOT NULL DEFAULT 'active'`);
   ensureColumn(db, 'conversation_summaries', 'recall_policy', `TEXT NOT NULL DEFAULT 'on_topic'`);
+  ensureColumn(db, 'conversation_summaries', 'scope', `TEXT NOT NULL DEFAULT 'persona'`);
+  ensureColumn(db, 'conversation_summaries', 'project_id', 'TEXT');
+  ensureColumn(db, 'conversation_summaries', 'updated_at', 'INTEGER');
+  ensureColumn(db, 'conversation_summaries', 'last_used_at', 'INTEGER');
+  ensureColumn(db, 'conversation_summaries', 'use_count', 'INTEGER NOT NULL DEFAULT 0');
+  backfillMemoryScopes(db);
   ensureColumn(db, 'memory_jobs', 'next_run_at', 'INTEGER');
   ensureColumn(db, 'memory_jobs', 'max_attempts', 'INTEGER NOT NULL DEFAULT 3');
   ensureColumn(db, 'memory_jobs', 'last_heartbeat_at', 'INTEGER');
@@ -193,6 +209,19 @@ function ensureColumn(db: Database.Database, table: string, column: string, defi
   if (!cols.some((col) => col.name === safeColumn)) {
     db.exec(`ALTER TABLE ${safeTable} ADD COLUMN ${safeColumn} ${definition}`);
   }
+}
+
+function backfillMemoryScopes(db: Database.Database) {
+  db.exec(`
+    UPDATE episodes SET scope = 'persona' WHERE (scope IS NULL OR scope = '') AND persona_id IS NOT NULL AND persona_id != '';
+    UPDATE episodes SET scope = 'global' WHERE scope IS NULL OR scope = '';
+    UPDATE conversation_summaries SET scope = 'persona' WHERE (scope IS NULL OR scope = '') AND persona_id IS NOT NULL AND persona_id != '';
+    UPDATE conversation_summaries SET scope = 'global' WHERE scope IS NULL OR scope = '';
+    UPDATE facts SET scope = 'global' WHERE scope IS NULL OR scope = '';
+    UPDATE facts SET recall_policy = 'on_topic' WHERE recall_policy IS NULL OR recall_policy = '';
+    UPDATE facts SET use_count = 0 WHERE use_count IS NULL;
+    UPDATE conversation_summaries SET use_count = 0 WHERE use_count IS NULL;
+  `);
 }
 
 function requireIdentifier(value: string): string {
@@ -232,6 +261,10 @@ function normalizeFactInput(row: {
   confidence?: number;
   source_episode_id?: number;
   cardinality?: FactCardinality;
+  scope?: MemoryScope;
+  persona_id?: string;
+  project_id?: string;
+  recall_policy?: RecallPolicy;
 }) {
   const predicate = String(row.predicate ?? '').trim().toLowerCase();
   const subject = String(row.subject ?? 'user').trim() || 'user';
@@ -247,12 +280,16 @@ function normalizeFactInput(row: {
     ? Math.max(0, Math.min(1, Number(rawConfidence)))
     : 0.8;
   const cardinality = row.cardinality === 'set' ? 'set' : row.cardinality === 'single' ? 'single' : inferFactCardinality(predicate);
+  const scope = normalizeMemoryScope(row);
+  const recall_policy = requireRecallPolicy(row.recall_policy ?? 'on_topic');
   return {
     predicate,
     subject,
     object,
     confidence,
     cardinality,
+    ...scope,
+    recall_policy,
     source_episode_id: row.source_episode_id
   };
 }
@@ -296,6 +333,28 @@ function requireRecallPolicy(policy: string): RecallPolicy {
   return policy as RecallPolicy;
 }
 
+function requireMemoryScope(scope: string): MemoryScope {
+  if (!['global', 'persona', 'project'].includes(scope)) {
+    throw new Error('无效 memory scope');
+  }
+  return scope as MemoryScope;
+}
+
+function normalizeMemoryScope(input?: {
+  scope?: MemoryScope;
+  persona_id?: string;
+  project_id?: string;
+}): { scope: MemoryScope; persona_id?: string; project_id?: string } {
+  const scope = requireMemoryScope(input?.scope ?? 'global');
+  const persona_id = input?.persona_id?.trim() || undefined;
+  const project_id = input?.project_id?.trim() || undefined;
+  return {
+    scope,
+    persona_id: scope === 'persona' ? persona_id : undefined,
+    project_id: scope === 'project' ? project_id : undefined
+  };
+}
+
 function taskExcerpt(task: TaskRow): string {
   const text = (task.summary?.trim() || task.raw_json || '').trim();
   return text.length > 800 ? `${text.slice(0, 800)}…` : text;
@@ -304,10 +363,15 @@ function taskExcerpt(task: TaskRow): string {
 // ===== Episode =====
 export function appendEpisode(row: Omit<EpisodeRow, 'id'>): number {
   const db = getDb();
+  const scope = normalizeMemoryScope({
+    scope: row.scope ?? 'persona',
+    persona_id: row.persona_id,
+    project_id: row.project_id
+  });
   const stmt = db.prepare(
-    `INSERT INTO episodes (ts, role, content, persona_id, session_id) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO episodes (ts, role, content, persona_id, session_id, scope, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
   );
-  const r = stmt.run(row.ts, row.role, row.content, row.persona_id, row.session_id ?? null);
+  const r = stmt.run(row.ts, row.role, row.content, row.persona_id, row.session_id ?? null, scope.scope, scope.project_id ?? null);
   return Number(r.lastInsertRowid);
 }
 
@@ -316,22 +380,39 @@ export function getEpisodeById(id: number): EpisodeRow | undefined {
   return row ? toNullable(row) : undefined;
 }
 
-export function searchEpisodes(query: string, limit = 10): EpisodeRow[] {
+function visibleScopeSql(alias: string, opts?: { personaId?: string; projectId?: string }) {
+  const clauses = [`${alias}.scope = 'global'`];
+  const values: any[] = [];
+  if (opts?.personaId) {
+    clauses.push(`(${alias}.scope = 'persona' AND ${alias}.persona_id = ?)`);
+    values.push(opts.personaId);
+  }
+  if (opts?.projectId) {
+    clauses.push(`(${alias}.scope = 'project' AND ${alias}.project_id = ?)`);
+    values.push(opts.projectId);
+  }
+  return { sql: `(${clauses.join(' OR ')})`, values };
+}
+
+export function searchEpisodes(query: string, limit = 10, opts?: { personaId?: string; projectId?: string }): EpisodeRow[] {
   const db = getDb();
   const safeLimit = clampLimit(limit, 10, 100);
   const q = buildFtsQuery(query.trim());
   if (!q) return [];
+  const visible = visibleScopeSql('e', opts);
   try {
     return db
       .prepare(`
         SELECT e.* FROM episodes_fts f JOIN episodes e ON e.id = f.rowid
-        WHERE episodes_fts MATCH ? ORDER BY rank LIMIT ?
+        WHERE episodes_fts MATCH ? AND ${visible.sql} ORDER BY rank LIMIT ?
       `)
-      .all(q, safeLimit) as EpisodeRow[];
+      .all(q, ...visible.values, safeLimit)
+      .map((row) => toNullable(row as EpisodeRow));
   } catch {
     return db
-      .prepare(`SELECT * FROM episodes WHERE content LIKE ? ORDER BY id DESC LIMIT ?`)
-      .all(`%${query.trim()}%`, safeLimit) as EpisodeRow[];
+      .prepare(`SELECT e.* FROM episodes e WHERE e.content LIKE ? AND ${visible.sql} ORDER BY e.id DESC LIMIT ?`)
+      .all(`%${query.trim()}%`, ...visible.values, safeLimit)
+      .map((row) => toNullable(row as EpisodeRow));
   }
 }
 
@@ -348,6 +429,72 @@ export function recentEpisodes(limit = 50, persona?: string): EpisodeRow[] {
     .all(safeLimit) as EpisodeRow[];
 }
 
+function localDayBounds(localDay: string): { start: number; end: number } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDay)) throw new Error('localDay 必须是 YYYY-MM-DD');
+  const start = new Date(`${localDay}T00:00:00`).getTime();
+  const end = new Date(`${localDay}T23:59:59.999`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) throw new Error('无效 localDay');
+  return { start, end };
+}
+
+export function getEpisodeBoundsForLocalDay(input: { personaId: string; localDay: string }): { episodeStartId: number; episodeEndId: number } | null {
+  const { start, end } = localDayBounds(input.localDay);
+  const row = getDb()
+    .prepare(`SELECT MIN(id) AS episodeStartId, MAX(id) AS episodeEndId FROM episodes WHERE persona_id = ? AND ts >= ? AND ts <= ?`)
+    .get(input.personaId, start, end) as { episodeStartId?: number; episodeEndId?: number } | undefined;
+  if (!row?.episodeStartId || !row?.episodeEndId) return null;
+  return { episodeStartId: row.episodeStartId, episodeEndId: row.episodeEndId };
+}
+
+export function listEpisodesInRange(input: { personaId: string; episodeStartId: number; episodeEndId: number }): EpisodeRow[] {
+  return getDb()
+    .prepare(`SELECT * FROM episodes WHERE persona_id = ? AND id BETWEEN ? AND ? ORDER BY id ASC`)
+    .all(input.personaId, input.episodeStartId, input.episodeEndId)
+    .map((row) => toNullable(row as EpisodeRow));
+}
+
+export function listDailyDigestCoverage(input: {
+  personaId: string;
+  episodeStartId: number;
+  episodeEndId: number;
+}): Array<{ episodeStartId: number; episodeEndId: number }> {
+  return getDb()
+    .prepare(
+      `SELECT episode_start_id AS episodeStartId, episode_end_id AS episodeEndId
+       FROM conversation_summaries
+       WHERE kind = 'daily_digest'
+         AND status = 'active'
+         AND persona_id = ?
+         AND episode_start_id IS NOT NULL
+         AND episode_end_id IS NOT NULL
+         AND episode_end_id >= ?
+         AND episode_start_id <= ?
+       ORDER BY episode_start_id ASC`
+    )
+    .all(input.personaId, input.episodeStartId, input.episodeEndId) as Array<{ episodeStartId: number; episodeEndId: number }>;
+}
+
+export function findUncoveredRanges(
+  targetStart: number,
+  targetEnd: number,
+  coveredRanges: Array<{ episodeStartId: number; episodeEndId: number }>
+): Array<{ episodeStartId: number; episodeEndId: number }> {
+  const ranges = coveredRanges
+    .map((range) => ({ episodeStartId: Math.max(targetStart, range.episodeStartId), episodeEndId: Math.min(targetEnd, range.episodeEndId) }))
+    .filter((range) => range.episodeStartId <= range.episodeEndId)
+    .sort((a, b) => a.episodeStartId - b.episodeStartId);
+  const uncovered: Array<{ episodeStartId: number; episodeEndId: number }> = [];
+  let cursor = targetStart;
+  for (const range of ranges) {
+    if (range.episodeEndId < cursor) continue;
+    if (range.episodeStartId > cursor) uncovered.push({ episodeStartId: cursor, episodeEndId: range.episodeStartId - 1 });
+    cursor = Math.max(cursor, range.episodeEndId + 1);
+    if (cursor > targetEnd) break;
+  }
+  if (cursor <= targetEnd) uncovered.push({ episodeStartId: cursor, episodeEndId: targetEnd });
+  return uncovered;
+}
+
 // ===== Facts (predicate-keyed) =====
 export function upsertFact(row: {
   predicate: string;
@@ -356,6 +503,10 @@ export function upsertFact(row: {
   confidence?: number;
   source_episode_id?: number;
   cardinality?: FactCardinality;
+  scope?: MemoryScope;
+  persona_id?: string;
+  project_id?: string;
+  recall_policy?: RecallPolicy;
 }): { id: number; supersededId?: number } {
   const db = getDb();
   const normalized = normalizeFactInput(row);
@@ -363,17 +514,17 @@ export function upsertFact(row: {
     if (normalized.cardinality === 'set') {
       const existingSet = db
         .prepare(
-          `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND object = ? AND status = 'active' AND cardinality = 'set' ORDER BY id DESC LIMIT 1`
+          `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND object = ? AND status = 'active' AND cardinality = 'set' AND scope = ? AND COALESCE(persona_id, '') = ? AND COALESCE(project_id, '') = ? ORDER BY id DESC LIMIT 1`
         )
-        .get(normalized.predicate, normalized.subject, normalized.object) as FactRow | undefined;
+        .get(normalized.predicate, normalized.subject, normalized.object, normalized.scope, normalized.persona_id ?? '', normalized.project_id ?? '') as FactRow | undefined;
       if (existingSet) {
-        db.prepare(`UPDATE facts SET confidence = MIN(1.0, confidence + 0.05) WHERE id = ?`).run(existingSet.id);
+        db.prepare(`UPDATE facts SET confidence = MIN(1.0, confidence + 0.05), updated_at = ? WHERE id = ?`).run(Date.now(), existingSet.id);
         return { id: existingSet.id };
       }
       const r = db
         .prepare(
-          `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, source_episode_id, cardinality)
-           VALUES (?, ?, ?, ?, 'active', ?, ?, 'set')`
+          `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, updated_at, source_episode_id, cardinality, scope, persona_id, project_id, recall_policy)
+           VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 'set', ?, ?, ?, ?)`
         )
         .run(
           normalized.predicate,
@@ -381,27 +532,32 @@ export function upsertFact(row: {
           normalized.object,
           normalized.confidence,
           Date.now(),
-          normalized.source_episode_id ?? null
+          Date.now(),
+          normalized.source_episode_id ?? null,
+          normalized.scope,
+          normalized.persona_id ?? null,
+          normalized.project_id ?? null,
+          normalized.recall_policy
         );
       return { id: Number(r.lastInsertRowid) };
     }
 
     const activeFacts = db
       .prepare(
-        `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' ORDER BY id DESC`
+        `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND scope = ? AND COALESCE(persona_id, '') = ? AND COALESCE(project_id, '') = ? ORDER BY id DESC`
       )
-      .all(normalized.predicate, normalized.subject) as FactRow[];
+      .all(normalized.predicate, normalized.subject, normalized.scope, normalized.persona_id ?? '', normalized.project_id ?? '') as FactRow[];
     const existing = activeFacts[0];
 
     if (existing && existing.object === normalized.object) {
-      db.prepare(`UPDATE facts SET confidence = MIN(1.0, confidence + 0.05) WHERE id = ?`).run(existing.id);
+      db.prepare(`UPDATE facts SET confidence = MIN(1.0, confidence + 0.05), updated_at = ? WHERE id = ?`).run(Date.now(), existing.id);
       return { id: existing.id };
     }
 
     const r = db
       .prepare(
-        `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, source_episode_id, cardinality)
-         VALUES (?, ?, ?, ?, 'active', ?, ?, 'single')`
+        `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, updated_at, source_episode_id, cardinality, scope, persona_id, project_id, recall_policy)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 'single', ?, ?, ?, ?)`
       )
       .run(
         normalized.predicate,
@@ -409,14 +565,19 @@ export function upsertFact(row: {
         normalized.object,
         normalized.confidence,
         Date.now(),
-        normalized.source_episode_id ?? null
+        Date.now(),
+        normalized.source_episode_id ?? null,
+        normalized.scope,
+        normalized.persona_id ?? null,
+        normalized.project_id ?? null,
+        normalized.recall_policy
       );
     const newId = Number(r.lastInsertRowid);
 
     db.prepare(
-      `UPDATE facts SET status = 'superseded', superseded_by = ?
-       WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND id <> ?`
-    ).run(newId, normalized.predicate, normalized.subject, newId);
+      `UPDATE facts SET status = 'superseded', superseded_by = ?, updated_at = ?
+       WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND id <> ? AND scope = ? AND COALESCE(persona_id, '') = ? AND COALESCE(project_id, '') = ?`
+    ).run(newId, Date.now(), normalized.predicate, normalized.subject, newId, normalized.scope, normalized.persona_id ?? '', normalized.project_id ?? '');
 
     return existing ? { id: newId, supersededId: existing.id } : { id: newId };
   })();
@@ -436,23 +597,76 @@ export function setFactStatus(id: number, status: FactStatus) {
     if (!fact) return;
     if ((fact.cardinality ?? 'single') === 'single') {
       db.prepare(
-        `UPDATE facts SET status = 'superseded', superseded_by = ?
-         WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND id <> ?`
-      ).run(id, fact.predicate, fact.subject, id);
+        `UPDATE facts SET status = 'superseded', superseded_by = ?, updated_at = ?
+         WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND id <> ? AND scope = ? AND COALESCE(persona_id, '') = ? AND COALESCE(project_id, '') = ?`
+      ).run(id, Date.now(), fact.predicate, fact.subject, id, fact.scope ?? 'global', fact.persona_id ?? '', fact.project_id ?? '');
     }
-    db.prepare(`UPDATE facts SET status = 'active', superseded_by = NULL WHERE id = ?`).run(id);
+    db.prepare(`UPDATE facts SET status = 'active', superseded_by = NULL, updated_at = ? WHERE id = ?`).run(Date.now(), id);
   })();
 }
 
-export function listFacts(opts?: { status?: FactStatus; limit?: number }): FactRow[] {
-  const db = getDb();
+export function listFacts(opts?: {
+  status?: FactStatus;
+  scope?: MemoryScope;
+  personaId?: string;
+  projectId?: string;
+  query?: string;
+  limit?: number;
+}): FactRow[] {
   const limit = clampLimit(opts?.limit, 200, 1000);
-  if (!opts?.status) {
-    return db.prepare(`SELECT * FROM facts ORDER BY id DESC LIMIT ?`).all(limit) as FactRow[];
+  const clauses: string[] = [];
+  const values: any[] = [];
+  if (opts?.status) {
+    clauses.push(`status = ?`);
+    values.push(opts.status);
   }
-  return db
-    .prepare(`SELECT * FROM facts WHERE status = ? ORDER BY id DESC LIMIT ?`)
-    .all(opts.status, limit) as FactRow[];
+  if (opts?.scope) {
+    clauses.push(`scope = ?`);
+    values.push(opts.scope);
+  }
+  if (opts?.personaId) {
+    clauses.push(`persona_id = ?`);
+    values.push(opts.personaId);
+  }
+  if (opts?.projectId) {
+    clauses.push(`project_id = ?`);
+    values.push(opts.projectId);
+  }
+  if (opts?.query?.trim()) {
+    clauses.push(`(predicate LIKE ? OR subject LIKE ? OR object LIKE ?)`);
+    const q = `%${opts.query.trim()}%`;
+    values.push(q, q, q);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  values.push(limit);
+  return getDb()
+    .prepare(`SELECT * FROM facts ${where} ORDER BY id DESC LIMIT ?`)
+    .all(...values)
+    .map((row) => toNullable(row as FactRow));
+}
+
+export function listRecallableFacts(opts: {
+  personaId?: string;
+  projectId?: string;
+  policies?: RecallPolicy[];
+  limit?: number;
+}): FactRow[] {
+  const limit = clampLimit(opts.limit, 80, 500);
+  const visible = visibleScopeSql('f', opts);
+  const policies = opts.policies?.length ? opts.policies : ['always', 'on_topic'];
+  const placeholders = policies.map(() => '?').join(',');
+  return getDb()
+    .prepare(
+      `SELECT f.* FROM facts f
+       WHERE f.status = 'active' AND f.recall_policy IN (${placeholders}) AND ${visible.sql}
+       ORDER BY CASE f.scope WHEN 'project' THEN 0 WHEN 'persona' THEN 1 ELSE 2 END,
+                COALESCE(f.updated_at, f.created_at) DESC,
+                f.use_count DESC,
+                f.id DESC
+       LIMIT ?`
+    )
+    .all(...policies, ...visible.values, limit)
+    .map((row) => toNullable(row as FactRow));
 }
 
 export function getActiveFactsByPredicate(predicate: string, subject = 'user'): FactRow[] {
@@ -469,8 +683,68 @@ export function getDbFactById(id: number): FactRow | undefined {
   return row ? toNullable(row) : undefined;
 }
 
+export function updateFact(id: number, patch: Partial<{
+  predicate: string;
+  subject: string;
+  object: string;
+  confidence: number;
+  status: FactStatus;
+  cardinality: FactCardinality;
+  scope: MemoryScope;
+  persona_id?: string;
+  project_id?: string;
+  recall_policy: RecallPolicy;
+}>) {
+  const current = getDb().prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as FactRow | undefined;
+  if (!current) return;
+  const normalized = normalizeFactInput({
+    predicate: patch.predicate ?? current.predicate,
+    subject: patch.subject ?? current.subject,
+    object: patch.object ?? current.object,
+    confidence: patch.confidence ?? current.confidence,
+    cardinality: patch.cardinality ?? current.cardinality,
+    scope: patch.scope ?? current.scope ?? 'global',
+    persona_id: patch.persona_id ?? current.persona_id,
+    project_id: patch.project_id ?? current.project_id,
+    recall_policy: patch.recall_policy ?? current.recall_policy ?? 'on_topic'
+  });
+  const status = patch.status ? requireFactStatus(patch.status) : current.status;
+  getDb().transaction(() => {
+    getDb()
+      .prepare(
+        `UPDATE facts SET predicate = ?, subject = ?, object = ?, confidence = ?, status = ?, cardinality = ?, scope = ?, persona_id = ?, project_id = ?, recall_policy = ?, updated_at = ? WHERE id = ?`
+      )
+      .run(
+        normalized.predicate,
+        normalized.subject,
+        normalized.object,
+        normalized.confidence,
+        status,
+        normalized.cardinality,
+        normalized.scope,
+        normalized.persona_id ?? null,
+        normalized.project_id ?? null,
+        normalized.recall_policy,
+        Date.now(),
+        id
+      );
+    deleteMemoryEmbeddingForMemory('fact', id);
+  })();
+}
+
+function requireFactStatus(status: string): FactStatus {
+  if (!['active', 'superseded', 'retracted'].includes(status)) throw new Error('无效 fact status');
+  return status as FactStatus;
+}
+
 export function deleteFact(id: number) {
-  getDb().prepare(`DELETE FROM facts WHERE id = ?`).run(id);
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(`DELETE FROM memory_embeddings WHERE memory_type = 'fact' AND memory_id = ?`).run(id);
+    db.prepare(`DELETE FROM memory_sources WHERE memory_type = 'fact' AND memory_id = ?`).run(id);
+    db.prepare(`DELETE FROM graph_sync_state WHERE source_type = 'fact' AND source_id = ?`).run(id);
+    db.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
+  })();
 }
 
 // ===== Tasks =====
@@ -589,26 +863,33 @@ export function appendConversationSummary(row: {
   keywords_json?: string;
   entities_json?: string;
   recall_policy?: RecallPolicy;
+  scope?: MemoryScope;
+  project_id?: string;
 }): number {
+  const scope = normalizeMemoryScope({ scope: row.scope ?? (row.persona_id ? 'persona' : 'global'), persona_id: row.persona_id, project_id: row.project_id });
+  const now = Date.now();
   const r = getDb()
     .prepare(
       `INSERT OR IGNORE INTO conversation_summaries
-       (ts, episode_start_id, episode_end_id, persona_id, title, summary, importance, kind, keywords_json, entities_json, created_at, status, recall_policy)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
+       (ts, episode_start_id, episode_end_id, persona_id, title, summary, importance, kind, keywords_json, entities_json, created_at, updated_at, status, recall_policy, scope, project_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`
     )
     .run(
       row.ts,
       row.episode_start_id ?? null,
       row.episode_end_id ?? null,
-      row.persona_id ?? null,
+      scope.persona_id ?? row.persona_id ?? null,
       row.title.trim() || '重要对话',
       row.summary.trim(),
       Math.max(0, Math.min(1, Number(row.importance ?? 0.5))),
       row.kind.trim() || 'conversation',
       row.keywords_json ?? '[]',
       row.entities_json ?? '[]',
-      Date.now(),
-      requireRecallPolicy(row.recall_policy ?? 'on_topic')
+      now,
+      now,
+      requireRecallPolicy(row.recall_policy ?? 'on_topic'),
+      scope.scope,
+      scope.project_id ?? null
     );
   if (r.lastInsertRowid) return Number(r.lastInsertRowid);
   const existing = getDb()
@@ -655,21 +936,25 @@ export function listRecallableConversationSummaries(opts?: {
   limit?: number;
   query?: string;
   alwaysOnly?: boolean;
+  personaId?: string;
+  projectId?: string;
 }): ConversationSummaryRow[] {
   const limit = clampLimit(opts?.limit, 5, 50);
   const values: any[] = [];
-  let sql = `SELECT * FROM conversation_summaries WHERE status = 'active'`;
+  const visible = visibleScopeSql('s', opts);
+  let sql = `SELECT s.* FROM conversation_summaries s WHERE s.status = 'active' AND ${visible.sql}`;
+  values.push(...visible.values);
   if (opts?.alwaysOnly || !opts?.query?.trim()) {
-    sql += ` AND recall_policy = 'always'`;
+    sql += ` AND s.recall_policy = 'always'`;
   } else {
-    sql += ` AND recall_policy IN ('always', 'on_topic')`;
+    sql += ` AND s.recall_policy IN ('always', 'on_topic')`;
   }
   if (opts?.query?.trim()) {
     const q = `%${opts.query.trim()}%`;
-    sql += ` AND (title LIKE ? OR summary LIKE ? OR keywords_json LIKE ? OR entities_json LIKE ?)`;
+    sql += ` AND (s.title LIKE ? OR s.summary LIKE ? OR s.keywords_json LIKE ? OR s.entities_json LIKE ?)`;
     values.push(q, q, q, q);
   }
-  sql += ` ORDER BY CASE recall_policy WHEN 'always' THEN 0 ELSE 1 END, importance DESC, id DESC LIMIT ?`;
+  sql += ` ORDER BY CASE s.recall_policy WHEN 'always' THEN 0 ELSE 1 END, s.importance DESC, s.id DESC LIMIT ?`;
   values.push(limit);
   return getDb()
     .prepare(sql)
@@ -682,6 +967,49 @@ export function getConversationSummaryById(id: number): ConversationSummaryRow |
     .prepare(`SELECT * FROM conversation_summaries WHERE id = ?`)
     .get(id) as ConversationSummaryRow | undefined;
   return row ? toNullable(row) : undefined;
+}
+
+export function deleteConversationSummary(id: number) {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(`DELETE FROM memory_embeddings WHERE memory_type = 'conversation_summary' AND memory_id = ?`).run(id);
+    db.prepare(`DELETE FROM memory_sources WHERE memory_type = 'conversation_summary' AND memory_id = ?`).run(id);
+    db.prepare(`DELETE FROM graph_sync_state WHERE source_type = 'conversation_summary' AND source_id = ?`).run(id);
+    db.prepare(`DELETE FROM conversation_summaries WHERE id = ?`).run(id);
+  })();
+}
+
+export function deleteEpisodeCascade(id: number) {
+  const db = getDb();
+  db.transaction(() => {
+    const summaryRows = db
+      .prepare(
+        `SELECT DISTINCT s.id FROM conversation_summaries s
+         LEFT JOIN memory_sources ms ON ms.memory_type = 'conversation_summary' AND ms.memory_id = s.id
+         WHERE s.episode_start_id = ? OR s.episode_end_id = ? OR (ms.source_type = 'episode' AND ms.source_id = ?)`
+      )
+      .all(id, id, id) as Array<{ id: number }>;
+    const factRows = db
+      .prepare(
+        `SELECT DISTINCT f.id FROM facts f
+         LEFT JOIN memory_sources ms ON ms.memory_type = 'fact' AND ms.memory_id = f.id
+         WHERE f.source_episode_id = ? OR (ms.source_type = 'episode' AND ms.source_id = ?)`
+      )
+      .all(id, id) as Array<{ id: number }>;
+    for (const row of summaryRows) deleteConversationSummary(row.id);
+    for (const row of factRows) deleteFact(row.id);
+    db.prepare(`DELETE FROM memory_sources WHERE source_type = 'episode' AND source_id = ?`).run(id);
+    db.prepare(`DELETE FROM episodes WHERE id = ?`).run(id);
+  })();
+}
+
+export function markMemoryUsed(memoryType: EmbeddableMemoryType, id: number) {
+  const now = Date.now();
+  if (memoryType === 'fact') {
+    getDb().prepare(`UPDATE facts SET use_count = use_count + 1, last_used_at = ? WHERE id = ?`).run(now, id);
+    return;
+  }
+  getDb().prepare(`UPDATE conversation_summaries SET use_count = use_count + 1, last_used_at = ? WHERE id = ?`).run(now, id);
 }
 
 // ===== Memory jobs =====

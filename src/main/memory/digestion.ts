@@ -5,13 +5,19 @@ import {
   enqueueMemoryJob,
   getConversationSummaryById,
   getEpisodeById,
+  listEpisodesInRange,
   listMemorySources,
   updateMemoryJob,
   upsertFact,
   upsertGraphSyncState
 } from './store';
 import { embedMemoryItem, embedMissingMemories } from './embeddings';
-import { extractMemoryFromEpisodePair, type MemoryExtraction } from './extractor';
+import {
+  extractDailyDigestFromEpisodes,
+  extractImportantMemoryFromEpisodePair,
+  extractMemoryFromEpisodePair,
+  type MemoryExtraction
+} from './extractor';
 import { syncConversationSummaryToGraph } from './graph';
 import type { MemoryJobRow } from '../../shared/types';
 
@@ -23,9 +29,106 @@ function excerpt(text: string): string {
   return text.trim().slice(0, 500);
 }
 
+function persistExtraction(input: {
+  extraction: MemoryExtraction;
+  personaId: string;
+  ts: number;
+  episodeStartId: number;
+  episodeEndId: number;
+  summaryKind: string;
+  summaryScope?: 'persona' | 'global' | 'project';
+  sources: Array<{ id: number; content: string }>;
+}): { summaryId: number; factIds: number[] } {
+  const cfg = getConfig().memory;
+  let summaryId = 0;
+  if (input.extraction.summary?.should_create) {
+    summaryId = appendConversationSummary({
+      ts: input.ts,
+      episode_start_id: input.episodeStartId,
+      episode_end_id: input.episodeEndId,
+      persona_id: input.personaId,
+      title: input.extraction.summary.title,
+      summary: input.extraction.summary.summary,
+      importance: input.extraction.importance,
+      kind: input.summaryKind,
+      keywords_json: JSON.stringify(input.extraction.summary.keywords),
+      entities_json: JSON.stringify(input.extraction.summary.entities),
+      scope: input.summaryScope ?? 'persona'
+    });
+    if (summaryId) {
+      for (const source of input.sources) {
+        appendMemorySource({
+          memory_type: 'conversation_summary',
+          memory_id: summaryId,
+          source_type: 'episode',
+          source_id: source.id,
+          excerpt: excerpt(source.content)
+        });
+      }
+    }
+  }
+
+  const factIds: number[] = [];
+  const factSource = input.sources[0];
+  for (const fact of input.extraction.facts) {
+    const scope = fact.scope === 'global' || fact.scope === 'persona' || fact.scope === 'project' ? fact.scope : 'persona';
+    const safeScope = scope === 'project' ? 'persona' : scope;
+    const result = upsertFact({
+      ...fact,
+      scope: safeScope,
+      persona_id: safeScope === 'persona' ? input.personaId : undefined,
+      recall_policy: fact.recall_policy ?? 'on_topic',
+      source_episode_id: factSource?.id
+    });
+    factIds.push(result.id);
+    if (factSource) {
+      appendMemorySource({
+        memory_type: 'fact',
+        memory_id: result.id,
+        source_type: 'episode',
+        source_id: factSource.id,
+        excerpt: excerpt(factSource.content)
+      });
+    }
+  }
+
+  if (summaryId && cfg.graphEnabled && cfg.graphWriteEnabled) {
+    enqueueMemoryJob({
+      type: 'graph_sync_summary',
+      dedupe_key: `graph_sync_summary:${summaryId}`,
+      payload_json: JSON.stringify({ summaryId, extraction: input.extraction })
+    });
+  }
+  if (cfg.embeddingEnabled) {
+    if (summaryId) {
+      enqueueMemoryJob({
+        type: 'embed_memory_item',
+        dedupe_key: `embed_memory_item:conversation_summary:${summaryId}`,
+        payload_json: JSON.stringify({ memoryType: 'conversation_summary', memoryId: summaryId })
+      });
+    }
+    for (const factId of factIds) {
+      enqueueMemoryJob({
+        type: 'embed_memory_item',
+        dedupe_key: `embed_memory_item:fact:${factId}`,
+        payload_json: JSON.stringify({ memoryType: 'fact', memoryId: factId })
+      });
+    }
+  }
+  return { summaryId, factIds };
+}
+
 export async function processMemoryJob(job: MemoryJobRow) {
   if (job.type === 'digest_episode_pair') {
     await digestEpisodePair(job);
+    return;
+  }
+  if (job.type === 'digest_important_episode_pair') {
+    await digestImportantEpisodePair(job);
+    return;
+  }
+  if (job.type === 'digest_diary_range') {
+    await digestDiaryRange(job);
     return;
   }
   if (job.type === 'graph_sync_summary') {
@@ -58,76 +161,110 @@ async function digestEpisodePair(job: MemoryJobRow) {
   if (!userEpisode) throw new Error(`user episode not found: ${payload.userEpisodeId}`);
   const assistantEpisode = payload.assistantEpisodeId ? getEpisodeById(payload.assistantEpisodeId) : undefined;
   const extraction = await extractMemoryFromEpisodePair({ userEpisode, assistantEpisode, personaId: payload.personaId });
-  let summaryId = 0;
-  if (extraction.summary?.should_create) {
-    summaryId = appendConversationSummary({
-      ts: userEpisode.ts,
-      episode_start_id: userEpisode.id,
-      episode_end_id: assistantEpisode?.id ?? userEpisode.id,
-      persona_id: payload.personaId,
-      title: extraction.summary.title,
-      summary: extraction.summary.summary,
-      importance: extraction.importance,
-      kind: extraction.summary.kind,
-      keywords_json: JSON.stringify(extraction.summary.keywords),
-      entities_json: JSON.stringify(extraction.summary.entities)
-    });
-    if (summaryId) {
-      appendMemorySource({
-        memory_type: 'conversation_summary',
-        memory_id: summaryId,
-        source_type: 'episode',
-        source_id: userEpisode.id,
-        excerpt: excerpt(userEpisode.content)
-      });
-      if (assistantEpisode) {
-        appendMemorySource({
-          memory_type: 'conversation_summary',
-          memory_id: summaryId,
-          source_type: 'episode',
-          source_id: assistantEpisode.id,
-          excerpt: excerpt(assistantEpisode.content)
-        });
-      }
-    }
+  const persisted = persistExtraction({
+    extraction,
+    personaId: payload.personaId,
+    ts: userEpisode.ts,
+    episodeStartId: userEpisode.id,
+    episodeEndId: assistantEpisode?.id ?? userEpisode.id,
+    summaryKind: extraction.summary?.kind ?? 'conversation',
+    sources: [
+      { id: userEpisode.id, content: userEpisode.content },
+      ...(assistantEpisode ? [{ id: assistantEpisode.id, content: assistantEpisode.content }] : [])
+    ]
+  });
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify({ ...persisted, extraction }) });
+}
+
+async function digestImportantEpisodePair(job: MemoryJobRow) {
+  const cfg = getConfig().memory;
+  if (!cfg.digestionEnabled) {
+    updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: '{"skipped":"digestion disabled"}' });
+    return;
   }
-  const factIds: number[] = [];
-  for (const fact of extraction.facts) {
-    const result = upsertFact({ ...fact, source_episode_id: userEpisode.id });
-    factIds.push(result.id);
-    appendMemorySource({
-      memory_type: 'fact',
-      memory_id: result.id,
-      source_type: 'episode',
-      source_id: userEpisode.id,
-      excerpt: excerpt(userEpisode.content)
-    });
+  const payload = parsePayload<{
+    userEpisodeId: number;
+    assistantEpisodeId: number;
+    personaId: string;
+    triggerKind: string;
+  }>(job);
+  const userEpisode = getEpisodeById(payload.userEpisodeId);
+  if (!userEpisode) throw new Error(`user episode not found: ${payload.userEpisodeId}`);
+  const assistantEpisode = getEpisodeById(payload.assistantEpisodeId);
+  if (!assistantEpisode) throw new Error(`assistant episode not found: ${payload.assistantEpisodeId}`);
+  const extraction = await extractImportantMemoryFromEpisodePair({
+    userEpisode,
+    assistantEpisode,
+    personaId: payload.personaId,
+    triggerKind: payload.triggerKind
+  });
+  const persisted = persistExtraction({
+    extraction,
+    personaId: payload.personaId,
+    ts: userEpisode.ts,
+    episodeStartId: userEpisode.id,
+    episodeEndId: assistantEpisode.id,
+    summaryKind: 'important_digest',
+    sources: [
+      { id: userEpisode.id, content: userEpisode.content },
+      { id: assistantEpisode.id, content: assistantEpisode.content }
+    ]
+  });
+  updateMemoryJob(job.id, {
+    status: 'done',
+    finished_at: Date.now(),
+    result_json: JSON.stringify({ ...persisted, triggerKind: payload.triggerKind, extraction })
+  });
+}
+
+async function digestDiaryRange(job: MemoryJobRow) {
+  const cfg = getConfig().memory;
+  if (!cfg.digestionEnabled) {
+    updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: '{"skipped":"digestion disabled"}' });
+    return;
   }
-  const resultJson = JSON.stringify({ summaryId, factIds, extraction });
-  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: resultJson });
-  if (summaryId && cfg.graphEnabled && cfg.graphWriteEnabled) {
-    enqueueMemoryJob({
-      type: 'graph_sync_summary',
-      dedupe_key: `graph_sync_summary:${summaryId}`,
-      payload_json: JSON.stringify({ summaryId, extraction })
-    });
+  const payload = parsePayload<{
+    personaId: string;
+    localDay: string;
+    episodeStartId: number;
+    episodeEndId: number;
+  }>(job);
+  const episodes = listEpisodesInRange({
+    personaId: payload.personaId,
+    episodeStartId: payload.episodeStartId,
+    episodeEndId: payload.episodeEndId
+  });
+  if (!episodes.length) throw new Error(`episodes not found: ${payload.episodeStartId}-${payload.episodeEndId}`);
+  const extraction = await extractDailyDigestFromEpisodes({
+    personaId: payload.personaId,
+    localDay: payload.localDay,
+    episodes
+  });
+  if (!extraction.summary) {
+    extraction.summary = {
+      should_create: true,
+      title: `${payload.localDay} 的日记`,
+      kind: 'daily_digest',
+      summary: '这段对话没有可提炼为长期事实的内容。',
+      keywords: [],
+      entities: []
+    };
   }
-  if (cfg.embeddingEnabled) {
-    if (summaryId) {
-      enqueueMemoryJob({
-        type: 'embed_memory_item',
-        dedupe_key: `embed_memory_item:conversation_summary:${summaryId}`,
-        payload_json: JSON.stringify({ memoryType: 'conversation_summary', memoryId: summaryId })
-      });
-    }
-    for (const factId of factIds) {
-      enqueueMemoryJob({
-        type: 'embed_memory_item',
-        dedupe_key: `embed_memory_item:fact:${factId}`,
-        payload_json: JSON.stringify({ memoryType: 'fact', memoryId: factId })
-      });
-    }
-  }
+  const sourceEpisodes = episodes.length <= 2 ? episodes : [episodes[0], episodes[episodes.length - 1]];
+  const persisted = persistExtraction({
+    extraction,
+    personaId: payload.personaId,
+    ts: episodes[0].ts,
+    episodeStartId: payload.episodeStartId,
+    episodeEndId: payload.episodeEndId,
+    summaryKind: 'daily_digest',
+    sources: sourceEpisodes.map((episode) => ({ id: episode.id, content: episode.content }))
+  });
+  updateMemoryJob(job.id, {
+    status: 'done',
+    finished_at: Date.now(),
+    result_json: JSON.stringify({ ...persisted, localDay: payload.localDay, episodeCount: episodes.length, extraction })
+  });
 }
 
 async function embedMemoryItemJob(job: MemoryJobRow) {

@@ -1,7 +1,7 @@
 import { getActiveProvider } from '../config';
 import { chat as providerChat } from '../providers';
 import { inferFactCardinality } from './store';
-import type { EpisodeRow, FactCardinality } from '../../shared/types';
+import type { EpisodeRow, FactCardinality, MemoryScope, RecallPolicy } from '../../shared/types';
 
 export interface MemoryExtraction {
   importance: number;
@@ -19,6 +19,8 @@ export interface MemoryExtraction {
     object: string;
     confidence: number;
     cardinality?: FactCardinality;
+    scope?: MemoryScope;
+    recall_policy?: RecallPolicy;
   }>;
   entities: Array<{
     name: string;
@@ -89,7 +91,11 @@ function normalizeExtraction(raw: any): MemoryExtraction {
         confidence: clamp01(f?.confidence, 0.7),
         cardinality: f?.cardinality === 'set' || f?.cardinality === 'single'
           ? f.cardinality
-          : inferFactCardinality(String(f?.predicate ?? '').trim().toLowerCase())
+          : inferFactCardinality(String(f?.predicate ?? '').trim().toLowerCase()),
+        scope: f?.scope === 'global' || f?.scope === 'persona' || f?.scope === 'project' ? f.scope : undefined,
+        recall_policy: f?.recall_policy === 'always' || f?.recall_policy === 'on_topic' || f?.recall_policy === 'manual_only' || f?.recall_policy === 'never'
+          ? f.recall_policy
+          : undefined
       }))
       .filter((f) => /^[a-z0-9_.-]{1,64}$/.test(f.predicate) && f.object)
       .slice(0, 5),
@@ -131,32 +137,15 @@ function normalizeExtraction(raw: any): MemoryExtraction {
   return extraction;
 }
 
-export async function extractMemoryFromEpisodePair(input: {
-  userEpisode: EpisodeRow;
-  assistantEpisode?: EpisodeRow;
-  personaId: string;
-}): Promise<MemoryExtraction> {
+async function extractWithPrompt(systemPrompt: string, source: string, maxTokens = 3000): Promise<MemoryExtraction> {
   const provider = getActiveProvider();
   if (!provider) throw new Error('尚未配置 API provider, 无法整理记忆');
-  const source = [
-    `persona_id: ${input.personaId}`,
-    `user episode #${input.userEpisode.id}: ${input.userEpisode.content}`,
-    input.assistantEpisode
-      ? `assistant episode #${input.assistantEpisode.id}: ${input.assistantEpisode.content}`
-      : ''
-  ]
-    .filter(Boolean)
-    .join('\n\n');
   const resp = await providerChat(provider, {
     messages: [
-      {
-        role: 'system',
-        content:
-          '你是 reader-pet 的长期记忆整理器。只输出严格 JSON, 不要 markdown。只抽取长期有用且能由原文支持的记忆: 用户偏好、伴侣连续性、项目决策、创作世界观、工具任务结果、边界和来源可追溯内容。不要记录玩笑、假设、短期寒暄, 不要编造。事实 cardinality: single 表示同 predicate+subject 只能有一个当前值; set 表示可同时存在多个值, 用于 likes/dislikes/interests/boundaries/tools/ongoing_projects/writing_themes 等偏好、边界、兴趣、项目列表。JSON schema: {"importance":0..1,"summary":{"should_create":boolean,"title":string,"kind":string,"summary":string,"keywords":string[],"entities":string[]},"facts":[{"predicate":"lower_snake_key","subject":"user","object":string,"confidence":0..1,"cardinality":"single|set"}],"entities":[{"name":string,"type":string,"aliases":string[]}],"relations":[{"subject":string,"subject_type":string,"predicate":string,"object":string,"object_type":string,"qualifier":string,"confidence":0..1,"importance":0..1}],"decisions":[{"title":string,"decision":string,"reason":string,"alternatives_rejected":string[],"confidence":0..1}]}'
-      },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: source }
     ],
-    maxTokens: 3000,
+    maxTokens,
     temperature: 0
   });
   try {
@@ -164,4 +153,66 @@ export async function extractMemoryFromEpisodePair(input: {
   } catch {
     return EMPTY_EXTRACTION;
   }
+}
+
+function episodePairSource(input: { userEpisode: EpisodeRow; assistantEpisode?: EpisodeRow; personaId: string; triggerKind?: string }): string {
+  return [
+    `persona_id: ${input.personaId}`,
+    input.triggerKind ? `trigger_kind: ${input.triggerKind}` : '',
+    `user episode #${input.userEpisode.id}: ${input.userEpisode.content}`,
+    input.assistantEpisode
+      ? `assistant episode #${input.assistantEpisode.id}: ${input.assistantEpisode.content}`
+      : ''
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+const JSON_SCHEMA_PROMPT = 'JSON schema: {"importance":0..1,"summary":{"should_create":boolean,"title":string,"kind":string,"summary":string,"keywords":string[],"entities":string[]},"facts":[{"predicate":"lower_snake_key","subject":"user","object":string,"confidence":0..1,"cardinality":"single|set","scope":"global|persona|project","recall_policy":"always|on_topic|manual_only|never"}],"entities":[{"name":string,"type":string,"aliases":string[]}],"relations":[{"subject":string,"subject_type":string,"predicate":string,"object":string,"object_type":string,"qualifier":string,"confidence":0..1,"importance":0..1}],"decisions":[{"title":string,"decision":string,"reason":string,"alternatives_rejected":string[],"confidence":0..1}]}';
+
+export async function extractMemoryFromEpisodePair(input: {
+  userEpisode: EpisodeRow;
+  assistantEpisode?: EpisodeRow;
+  personaId: string;
+}): Promise<MemoryExtraction> {
+  return extractWithPrompt(
+    `你是 reader-pet 的长期记忆整理器。只输出严格 JSON, 不要 markdown。只抽取长期有用且能由原文支持的记忆: 用户偏好、伴侣连续性、项目决策、创作世界观、工具任务结果、边界和来源可追溯内容。不要记录玩笑、假设、短期寒暄、临时情绪, 不要编造。事实 cardinality: single 表示同 predicate+subject+scope 只能有一个当前值; set 表示可同时存在多个值。事实 scope: global=跨人格都应知道的稳定用户事实; persona=当前人格专属关系、称呼、互动偏好或共同经历; project=明确代码/项目决策, 没有清楚项目上下文时不要用 project。recall_policy: always=基础档案/重要边界; on_topic=相关时召回; manual_only=只供用户手动查看; never=保留但不主动召回。${JSON_SCHEMA_PROMPT}`,
+    episodePairSource(input)
+  );
+}
+
+export async function extractImportantMemoryFromEpisodePair(input: {
+  userEpisode: EpisodeRow;
+  assistantEpisode?: EpisodeRow;
+  personaId: string;
+  triggerKind: string;
+}): Promise<MemoryExtraction> {
+  const extraction = await extractWithPrompt(
+    `你是 reader-pet 的重大记忆即时整理器。只输出严格 JSON, 不要 markdown。输入是一轮被本地规则判定为重要的 user/assistant episode。只处理明确会影响未来多次互动的内容: 用户明确要求记住/别忘、称呼变化、边界和禁忌、纠正已有记忆、长期偏好、安全或权限规则、关系定位。不要把临时情绪、玩笑、一次性任务、角色扮演台词、模型自己编出的共同经历写成长期事实。summary 可以很短; facts 最多 3 条, 必须高置信、来源明确、可复用。称呼/边界/安全规则 recall_policy 通常用 always; 普通偏好用 on_topic。scope: global=跨人格稳定用户事实; persona=当前人格专属称呼/关系/共同经历; project=明确项目决策。${JSON_SCHEMA_PROMPT}`,
+    episodePairSource(input),
+    2200
+  );
+  if (extraction.summary) extraction.summary.kind = 'important_digest';
+  extraction.facts = extraction.facts.filter((fact) => fact.confidence >= 0.72).slice(0, 3);
+  return extraction;
+}
+
+export async function extractDailyDigestFromEpisodes(input: {
+  personaId: string;
+  localDay: string;
+  episodes: EpisodeRow[];
+}): Promise<MemoryExtraction> {
+  const source = [
+    `persona_id: ${input.personaId}`,
+    `local_day: ${input.localDay}`,
+    ...input.episodes.map((episode) => `${episode.role} episode #${episode.id} @ ${new Date(episode.ts).toLocaleString()}: ${episode.content}`)
+  ].join('\n\n');
+  const extraction = await extractWithPrompt(
+    `你是 reader-pet 的日记式记忆整理器。只输出严格 JSON, 不要 markdown。输入是一段按 episode id 连续的对话历史。summary 应像日记一样概括这段时间值得保留的对话、项目进展、关系/边界/偏好变化和重要上下文, 可以比 facts 稍宽。facts 必须非常保守: 只保存稳定、可复用、未来回应会受影响的事实; 不要把普通流水、临时情绪、一次性报错、寒暄或假设写成 fact。低置信内容只放 summary, 不写 fact。summary.kind 必须是 daily_digest。${JSON_SCHEMA_PROMPT}`,
+    source,
+    3500
+  );
+  if (extraction.summary) extraction.summary.kind = 'daily_digest';
+  extraction.facts = extraction.facts.filter((fact) => fact.confidence >= 0.82).slice(0, 4);
+  return extraction;
 }

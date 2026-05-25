@@ -7,6 +7,7 @@ import type {
   MemoryJobRow,
   MemorySourceRow,
   MemoryStats,
+  MemoryScope,
   RecallPolicy,
   TaskMemoryStatus,
   TaskRow
@@ -40,6 +41,12 @@ const POLICY_LABELS: Record<RecallPolicy, string> = {
   never: '永不召回'
 };
 
+const SCOPE_LABELS: Record<MemoryScope, string> = {
+  global: '全局',
+  persona: '人格',
+  project: '项目'
+};
+
 export default function MemorySection() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [stats, setStats] = useState<MemoryStats | null>(null);
@@ -52,11 +59,15 @@ export default function MemorySection() {
   const [monologues, setMonologues] = useState<MonologueEntry[]>([]);
   const [graphStats, setGraphStats] = useState<{ ok: boolean; nodes?: number; relationships?: number; message?: string } | null>(null);
   const [graphMessage, setGraphMessage] = useState('');
-  const [factForm, setFactForm] = useState({ predicate: '', subject: 'user', object: '' });
+  const [factForm, setFactForm] = useState({ predicate: '', subject: 'user', object: '', scope: 'global' as MemoryScope, recall_policy: 'on_topic' as RecallPolicy });
+  const [editingFact, setEditingFact] = useState<FactRow | null>(null);
+  const [factQuery, setFactQuery] = useState('');
+  const [factScope, setFactScope] = useState<'all' | MemoryScope>('all');
   const [search, setSearch] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [sourceTarget, setSourceTarget] = useState<SourceTarget | null>(null);
   const [sources, setSources] = useState<MemorySourceRow[]>([]);
+  const [dailyDigestMessage, setDailyDigestMessage] = useState('');
 
   const refresh = async () => {
     const [nextCfg, s] = await Promise.all([window.api.getConfig(), window.api.memStats()]);
@@ -64,7 +75,12 @@ export default function MemorySection() {
     setStats(s);
     if (tab === 'longterm') {
       const [nextFacts, nextSummaries] = await Promise.all([
-        window.api.memListFacts(showAll ? undefined : 'active', 200),
+        window.api.memListFacts({
+          status: showAll ? undefined : 'active',
+          scope: factScope === 'all' ? undefined : factScope,
+          query: factQuery.trim() || undefined,
+          limit: 200
+        }),
         window.api.memListSummaries(100)
       ]);
       setFacts(nextFacts);
@@ -84,12 +100,22 @@ export default function MemorySection() {
 
   useEffect(() => {
     refresh();
-  }, [tab, showAll]);
+  }, [tab, showAll, factScope]);
 
   const addFact = async () => {
     if (!factForm.predicate.trim() || !factForm.object.trim()) return;
-    await window.api.memUpsertFact(factForm);
-    setFactForm({ predicate: '', subject: 'user', object: '' });
+    await window.api.memUpsertFact({
+      ...factForm,
+      persona_id: factForm.scope === 'persona' ? cfg?.activePersonaId : undefined
+    });
+    setFactForm({ predicate: '', subject: 'user', object: '', scope: 'global', recall_policy: 'on_topic' });
+    refresh();
+  };
+
+  const saveEditingFact = async () => {
+    if (!editingFact) return;
+    await window.api.memUpdateFact(editingFact.id, editingFact);
+    setEditingFact(null);
     refresh();
   };
 
@@ -115,7 +141,19 @@ export default function MemorySection() {
       setEpisodes(await window.api.memRecentEpisodes(60));
       return;
     }
-    setEpisodes(await window.api.memSearchEpisodes(q, 30));
+    setEpisodes(await window.api.memSearchEpisodes(q, 30, { personaId: cfg?.activePersonaId }));
+  };
+
+  const deleteSummary = async (id: number) => {
+    if (!confirm('永久删除该摘要记忆?')) return;
+    await window.api.memDeleteSummary(id);
+    refresh();
+  };
+
+  const deleteEpisode = async (id: number) => {
+    if (!confirm('永久删除该历史片段及其派生记忆?')) return;
+    await window.api.memDeleteEpisodeCascade(id);
+    refresh();
   };
 
   const saveMemoryConfig = async () => {
@@ -129,6 +167,12 @@ export default function MemorySection() {
     const result = await window.api.memGraphTestConnection();
     setGraphMessage(result.message);
     setGraphStats(await window.api.memGraphStats());
+  };
+
+  const enqueueDailyDigest = async () => {
+    const result = await window.api.memEnqueueMissingDailyDigests();
+    setDailyDigestMessage(`${result.localDay} 已检查，入队 ${result.enqueued} 段日记摘要。`);
+    refresh();
   };
 
   const openSources = async (target: SourceTarget) => {
@@ -275,8 +319,10 @@ export default function MemorySection() {
               <button className="primary" onClick={saveMemoryConfig}>保存配置</button>
               <button onClick={testGraph}>测试 Neo4j 连接</button>
               <button onClick={async () => { await window.api.memKickDigestion(); refresh(); }}>整理 pending job</button>
+              <button onClick={enqueueDailyDigest}>检查并补写日记摘要</button>
               <button onClick={async () => { await window.api.memBackfillEmbeddings(); refresh(); }}>补齐向量索引</button>
             </div>
+            {dailyDigestMessage && <p className="muted">{dailyDigestMessage} 只补写未覆盖 episode range，不会删除原始历史。</p>}
             {graphMessage && <p className="muted">{graphMessage}</p>}
           </div>
           <p className="muted">
@@ -294,19 +340,26 @@ export default function MemorySection() {
             <label>Predicate (键)<input value={factForm.predicate} onChange={(e) => setFactForm({ ...factForm, predicate: e.target.value })} placeholder="例如: preferred_address / current_project" /></label>
             <label>Subject (主体, 默认 user)<input value={factForm.subject} onChange={(e) => setFactForm({ ...factForm, subject: e.target.value })} /></label>
             <label>Object (值)<input value={factForm.object} onChange={(e) => setFactForm({ ...factForm, object: e.target.value })} /></label>
+            <label>层级<select value={factForm.scope} onChange={(e) => setFactForm({ ...factForm, scope: e.target.value as MemoryScope })}>{(['global', 'persona', 'project'] as MemoryScope[]).map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}</select></label>
+            <label>召回策略<select value={factForm.recall_policy} onChange={(e) => setFactForm({ ...factForm, recall_policy: e.target.value as RecallPolicy })}>{(Object.keys(POLICY_LABELS) as RecallPolicy[]).map((p) => <option key={p} value={p}>{POLICY_LABELS[p]}</option>)}</select></label>
             <div className="form-actions"><button className="primary" onClick={addFact}>添加</button></div>
           </div>
-          <label className="checkbox-row"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />显示全部事实状态</label>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <label className="checkbox-row"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />显示全部事实状态</label>
+            <select value={factScope} onChange={(e) => setFactScope(e.target.value as 'all' | MemoryScope)}><option value="all">全部层级</option>{(['global', 'persona', 'project'] as MemoryScope[]).map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}</select>
+            <input placeholder="搜索事实" value={factQuery} onChange={(e) => setFactQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') refresh(); }} />
+            <button onClick={refresh}>筛选</button>
+          </div>
           <h3>语义事实</h3>
-          <table className="cap-table"><thead><tr><th>ID</th><th>Predicate</th><th>Subject</th><th>Object</th><th>类型</th><th>状态</th><th>置信</th><th>操作</th></tr></thead><tbody>
-            {facts.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
-            {facts.map((f) => <tr key={f.id}><td>{f.id}</td><td>{f.predicate}</td><td>{f.subject}</td><td>{f.object}</td><td><span className="memory-policy-badge">{f.cardinality ?? 'single'}</span></td><td><span className="memory-policy-badge">{f.status}</span></td><td>{f.confidence.toFixed(2)}</td><td><button className="mini" onClick={() => openSources({ type: 'fact', id: f.id, title: `fact #${f.id}` })}>来源</button> {f.status === 'active' ? <button className="mini" onClick={() => retract(f.id)}>retract</button> : <button className="mini" onClick={() => reactivate(f.id)}>reactivate</button>} <button className="mini danger" onClick={() => purge(f.id)}>×</button></td></tr>)}
+          <table className="cap-table"><thead><tr><th>ID</th><th>Predicate</th><th>Subject</th><th>Object</th><th>层级</th><th>召回</th><th>类型</th><th>状态</th><th>置信</th><th>操作</th></tr></thead><tbody>
+            {facts.length === 0 && <tr><td colSpan={10} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
+            {facts.map((f) => <tr key={f.id}><td>{f.id}</td><td>{f.predicate}</td><td>{f.subject}</td><td>{f.object}</td><td><span className="memory-policy-badge">{SCOPE_LABELS[f.scope ?? 'global']}</span></td><td><span className="memory-policy-badge">{POLICY_LABELS[f.recall_policy ?? 'on_topic']}</span></td><td><span className="memory-policy-badge">{f.cardinality ?? 'single'}</span></td><td><span className="memory-policy-badge">{f.status}</span></td><td>{f.confidence.toFixed(2)}</td><td><button className="mini" onClick={() => setEditingFact(f)}>编辑</button> <button className="mini" onClick={() => openSources({ type: 'fact', id: f.id, title: `fact #${f.id}` })}>来源</button> {f.status === 'active' ? <button className="mini" onClick={() => retract(f.id)}>retract</button> : <button className="mini" onClick={() => reactivate(f.id)}>reactivate</button>} <button className="mini danger" onClick={() => purge(f.id)}>×</button></td></tr>)}
           </tbody></table>
 
           <h3>对话 / 任务摘要</h3>
-          <table className="cap-table"><thead><tr><th>ID</th><th>时间</th><th>类型</th><th>重要性</th><th>标题</th><th>摘要</th><th>来源</th></tr></thead><tbody>
-            {summaries.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
-            {summaries.map((s) => <tr key={s.id}><td>{s.id}</td><td>{new Date(s.ts).toLocaleString()}</td><td><span className="memory-policy-badge">{s.kind === 'task_memory' ? '任务提升记忆' : s.kind}</span></td><td>{s.importance.toFixed(2)}</td><td>{s.title}</td><td>{s.summary.slice(0, 260)}</td><td><button className="mini" onClick={() => openSources({ type: 'conversation_summary', id: s.id, title: `summary #${s.id}` })}>来源</button></td></tr>)}
+          <table className="cap-table"><thead><tr><th>ID</th><th>时间</th><th>层级</th><th>类型</th><th>重要性</th><th>标题</th><th>摘要</th><th>来源</th><th>操作</th></tr></thead><tbody>
+            {summaries.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
+            {summaries.map((s) => <tr key={s.id}><td>{s.id}</td><td>{new Date(s.ts).toLocaleString()}</td><td><span className="memory-policy-badge">{SCOPE_LABELS[s.scope ?? 'persona']}</span></td><td><span className="memory-policy-badge">{s.kind === 'task_memory' ? '任务提升记忆' : s.kind}</span></td><td>{s.importance.toFixed(2)}</td><td>{s.title}</td><td>{s.summary.slice(0, 260)}</td><td><button className="mini" onClick={() => openSources({ type: 'conversation_summary', id: s.id, title: `summary #${s.id}` })}>来源</button></td><td><button className="mini danger" onClick={() => deleteSummary(s.id)}>删除</button></td></tr>)}
           </tbody></table>
         </div>
       )}
@@ -315,7 +368,7 @@ export default function MemorySection() {
         <div>
           <p className="memory-debug-note">这里是对话历史证据层。它可以被搜索和作为来源引用，但不等于夜梦主动记住的长期事实。</p>
           <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}><input style={{ flex: 1 }} placeholder="FTS5 搜索; 留空显示最近 60 条" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doSearch(); }} /><button onClick={doSearch}>搜索</button></div>
-          <div className="ep-list">{episodes.length === 0 && <div className="muted" style={{ textAlign: 'center', padding: 20 }}>暂无</div>}{episodes.map((e) => <div key={e.id} className={`ep-row ep-${e.role}`}><div className="ep-meta"><span className="muted">#{e.id}</span> · {new Date(e.ts).toLocaleString()} · {e.role} · {e.persona_id}</div><div className="ep-content">{e.content.slice(0, 600)}</div></div>)}</div>
+          <div className="ep-list">{episodes.length === 0 && <div className="muted" style={{ textAlign: 'center', padding: 20 }}>暂无</div>}{episodes.map((e) => <div key={e.id} className={`ep-row ep-${e.role}`}><div className="ep-meta"><span className="muted">#{e.id}</span> · {new Date(e.ts).toLocaleString()} · {e.role} · {e.persona_id} · {SCOPE_LABELS[e.scope ?? 'persona']} <button className="mini danger" onClick={() => deleteEpisode(e.id)}>删除</button></div><div className="ep-content">{e.content.slice(0, 600)}</div></div>)}</div>
         </div>
       )}
 
@@ -348,6 +401,21 @@ export default function MemorySection() {
             {jobs.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
             {jobs.map((j) => <tr key={j.id}><td>{j.id}</td><td>{j.type}</td><td>{j.status}</td><td>{j.attempts}/{j.max_attempts ?? 3}</td><td>{new Date(j.created_at).toLocaleString()}</td><td>{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</td><td>{j.next_run_at ? new Date(j.next_run_at).toLocaleString() : '-'}</td><td>{(j.error ?? '').slice(0, 220)}</td><td>{j.status === 'failed' && <button className="mini" onClick={async () => { await window.api.memRetryJob(j.id); refresh(); }}>retry</button>}</td></tr>)}
           </tbody></table>
+        </div>
+      )}
+
+      {editingFact && (
+        <div className="modal-mask" onClick={() => setEditingFact(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>编辑事实 #{editingFact.id}</h3>
+            <label>Predicate<input value={editingFact.predicate} onChange={(e) => setEditingFact({ ...editingFact, predicate: e.target.value })} /></label>
+            <label>Subject<input value={editingFact.subject} onChange={(e) => setEditingFact({ ...editingFact, subject: e.target.value })} /></label>
+            <label>Object<textarea value={editingFact.object} onChange={(e) => setEditingFact({ ...editingFact, object: e.target.value })} /></label>
+            <label>层级<select value={editingFact.scope ?? 'global'} onChange={(e) => setEditingFact({ ...editingFact, scope: e.target.value as MemoryScope, persona_id: e.target.value === 'persona' ? cfg?.activePersonaId : undefined })}>{(['global', 'persona', 'project'] as MemoryScope[]).map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}</select></label>
+            <label>召回策略<select value={editingFact.recall_policy ?? 'on_topic'} onChange={(e) => setEditingFact({ ...editingFact, recall_policy: e.target.value as RecallPolicy })}>{(Object.keys(POLICY_LABELS) as RecallPolicy[]).map((p) => <option key={p} value={p}>{POLICY_LABELS[p]}</option>)}</select></label>
+            <label>状态<select value={editingFact.status} onChange={(e) => setEditingFact({ ...editingFact, status: e.target.value as FactRow['status'] })}><option value="active">active</option><option value="retracted">retracted</option><option value="superseded">superseded</option></select></label>
+            <div className="form-actions"><button className="primary" onClick={saveEditingFact}>保存</button><button onClick={() => setEditingFact(null)}>取消</button></div>
+          </div>
         </div>
       )}
 
