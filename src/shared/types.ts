@@ -174,6 +174,12 @@ export interface MemoryConfig {
   vectorRecallLimit: number;
   vectorMinScore: number;
   embeddingBackfillBatchSize: number;
+  rerankEnabled: boolean;
+  rerankUrl: string;
+  rerankApiKey: string;
+  rerankModel: string;
+  rerankTopK: number;
+  rerankMinScore: number;
 }
 
 export interface AppConfig {

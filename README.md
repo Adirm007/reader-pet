@@ -88,9 +88,14 @@ Live2D `.model3.json` 目前还没有接入，只预留了配置槽。
   - SQLite BLOB 存归一化向量，JS 余弦扫描，不引入原生依赖
   - digest 完成后自动为新 fact/summary 生成 embedding
   - 设置页支持 "补齐向量索引" 一键回填
+  - 默认召回更多候选，降低向量分数阈值，方便交给后续精排过滤
+- 可选 Reranker 精排：
+  - 对向量召回候选调用用户配置的 rerank HTTP endpoint
+  - 支持自定义 URL、API Key、model、top K 与最低精排分数
+  - 召回上下文会同时标出 rerank score 与 vector score，便于调试
 - 聊天召回是 intent-aware：显式回忆 / 任务相关 / 个人事实 / 寒暄等不同意图走不同召回路径，避免无脑塞 30 条事实
 
-Neo4j、digestion、embedding、向量召回均默认关闭，需要时在设置页打开。
+Neo4j、digestion、embedding、向量召回、Reranker 精排均默认关闭，需要时在设置页打开。
 
 ### Claude Code 集成
 
@@ -261,6 +266,7 @@ npm run package:dir
 - Claude Code hook bridge 端口
 - GPT-SoVITS 地址与参考音频
 - Neo4j 地址、账号、密码
+- Reranker URL、API Key、模型名、Top K 与最低分数
 - 安全模式文件白名单
 - Shell 白名单
 - 桌宠精灵图包

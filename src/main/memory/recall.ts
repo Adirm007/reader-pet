@@ -9,6 +9,7 @@ import {
 } from './store';
 import { recallGraphContext } from './graph';
 import { searchVectorMemories } from './embeddings';
+import { rerankCandidates } from './reranker';
 
 const RECALL_TRIGGERS = [
   '之前',
@@ -109,19 +110,29 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
         limit: cfg.vectorRecallLimit,
         minScore: cfg.vectorMinScore
       });
+      const candidates = vectorHits.map((hit) => ({
+        item: hit,
+        text: hit.text ?? '',
+        score: hit.score
+      }));
+      const reranked = await rerankCandidates(intent.query, candidates);
       const vectorLines: string[] = [];
-      for (const hit of vectorHits) {
+      for (const candidate of reranked) {
+        const hit = candidate.item;
+        const scoreText = candidate.rerankScore !== undefined
+          ? `rerank ${candidate.rerankScore.toFixed(2)}, vec ${hit.score.toFixed(2)}`
+          : `vec ${hit.score.toFixed(2)}`;
         if (hit.memoryType === 'fact') {
           const fact = getDbFactById(hit.memoryId);
           if (fact?.status === 'active') {
             factMap.set(fact.id, { predicate: fact.subject === 'user' ? fact.predicate : `${fact.subject}.${fact.predicate}`, object: fact.object });
-            vectorLines.push(`- fact #${fact.id} (${hit.score.toFixed(2)}) ${fact.subject}.${fact.predicate}: ${fact.object}`);
+            vectorLines.push(`- fact #${fact.id} (${scoreText}) ${fact.subject}.${fact.predicate}: ${fact.object}`);
           }
         } else {
           const summary = getConversationSummaryById(hit.memoryId);
           if (summary && (summary.status ?? 'active') === 'active' && summary.recall_policy !== 'never' && summary.recall_policy !== 'manual_only' && !summaryIds.has(summary.id)) {
             summaryIds.add(summary.id);
-            vectorLines.push(`- summary #${summary.id} (${hit.score.toFixed(2)}) ${summary.title}: ${summary.summary.slice(0, 220)}`);
+            vectorLines.push(`- summary #${summary.id} (${scoreText}) ${summary.title}: ${summary.summary.slice(0, 220)}`);
           }
         }
       }

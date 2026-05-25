@@ -235,6 +235,30 @@ export default function MemorySection() {
               Vector Min Score
               <input type="number" min={0} max={1} step={0.01} value={cfg.memory.vectorMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorMinScore: Number(e.target.value) } })} />
             </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={cfg.memory.rerankEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankEnabled: e.target.checked } })} />
+              启用 Reranker 精排
+            </label>
+            <label>
+              Reranker URL
+              <input value={cfg.memory.rerankUrl} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankUrl: e.target.value } })} placeholder="例如 http://127.0.0.1:8000/v1/rerank" />
+            </label>
+            <label>
+              Reranker API Key (可选)
+              <input type="password" value={cfg.memory.rerankApiKey} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankApiKey: e.target.value } })} />
+            </label>
+            <label>
+              Reranker Model
+              <input value={cfg.memory.rerankModel} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankModel: e.target.value } })} placeholder="例如 bge-reranker-v2-m3 / jina-reranker-v2-base-multilingual" />
+            </label>
+            <label>
+              Rerank Top K
+              <input type="number" min={1} max={20} value={cfg.memory.rerankTopK} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankTopK: Number(e.target.value) } })} />
+            </label>
+            <label>
+              Rerank Min Score
+              <input type="number" min={0} max={1} step={0.01} value={cfg.memory.rerankMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankMinScore: Number(e.target.value) } })} />
+            </label>
             <label>
               Neo4j URI
               <input value={cfg.memory.neo4jUri} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jUri: e.target.value } })} />

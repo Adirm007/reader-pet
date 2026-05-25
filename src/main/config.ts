@@ -102,9 +102,15 @@ const defaults: AppConfig = {
     embeddingProviderId: undefined,
     embeddingModel: '',
     vectorRecallEnabled: false,
-    vectorRecallLimit: 8,
-    vectorMinScore: 0.25,
-    embeddingBackfillBatchSize: 32
+    vectorRecallLimit: 24,
+    vectorMinScore: 0.15,
+    embeddingBackfillBatchSize: 32,
+    rerankEnabled: false,
+    rerankUrl: '',
+    rerankApiKey: '',
+    rerankModel: '',
+    rerankTopK: 8,
+    rerankMinScore: 0
   }
 };
 
