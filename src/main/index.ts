@@ -8,7 +8,7 @@ import { getConfig } from './config';
 import { setPetWindowGetter, startBridge, stopBridge } from './claude-code-bridge';
 import { setProactivePetWindowGetter, startProactive, stopProactive } from './proactive';
 import { closeMemory } from './memory/store';
-import { startMemoryWorker, stopMemoryWorker } from './memory/jobs';
+import { setMemoryJobPetWindowGetter, startMemoryWorker, stopMemoryWorker } from './memory/jobs';
 import { closeGraph } from './memory/neo4j-client';
 
 let petWindow: BrowserWindow | null = null;
@@ -279,6 +279,7 @@ app.whenReady().then(() => {
   );
   setPetWindowGetter(() => petWindow);
   setProactivePetWindowGetter(() => petWindow);
+  setMemoryJobPetWindowGetter(() => petWindow);
   createPetWindow();
   createTray();
 

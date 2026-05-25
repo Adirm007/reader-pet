@@ -5,6 +5,7 @@ import {
   enqueueMemoryJob,
   getConversationSummaryById,
   getEpisodeById,
+  listConversationSummaries,
   listEpisodesInRange,
   listMemorySources,
   updateMemoryJob,
@@ -18,7 +19,13 @@ import {
   extractMemoryFromEpisodePair,
   type MemoryExtraction
 } from './extractor';
-import { syncConversationSummaryToGraph } from './graph';
+import {
+  clearGraphProjection,
+  deleteConversationSummaryFromGraph,
+  deleteGraphRelationsBySource,
+  markGraphRelationsBySourceStatus,
+  syncConversationSummaryToGraph
+} from './graph';
 import type { MemoryJobRow } from '../../shared/types';
 
 function parsePayload<T>(job: MemoryJobRow): T {
@@ -143,6 +150,22 @@ export async function processMemoryJob(job: MemoryJobRow) {
     await embedMissingMemoriesJob(job);
     return;
   }
+  if (job.type === 'graph_delete_summary') {
+    await deleteGraphSummaryJob(job);
+    return;
+  }
+  if (job.type === 'graph_retract_fact') {
+    await retractGraphFactJob(job);
+    return;
+  }
+  if (job.type === 'graph_delete_fact') {
+    await deleteGraphFactJob(job);
+    return;
+  }
+  if (job.type === 'graph_rebuild_all') {
+    await rebuildGraphJob(job);
+    return;
+  }
   throw new Error(`未知 memory job type: ${job.type}`);
 }
 
@@ -240,16 +263,6 @@ async function digestDiaryRange(job: MemoryJobRow) {
     localDay: payload.localDay,
     episodes
   });
-  if (!extraction.summary) {
-    extraction.summary = {
-      should_create: true,
-      title: `${payload.localDay} 的日记`,
-      kind: 'daily_digest',
-      summary: '这段对话没有可提炼为长期事实的内容。',
-      keywords: [],
-      entities: []
-    };
-  }
   const sourceEpisodes = episodes.length <= 2 ? episodes : [episodes[0], episodes[episodes.length - 1]];
   const persisted = persistExtraction({
     extraction,
@@ -263,7 +276,13 @@ async function digestDiaryRange(job: MemoryJobRow) {
   updateMemoryJob(job.id, {
     status: 'done',
     finished_at: Date.now(),
-    result_json: JSON.stringify({ ...persisted, localDay: payload.localDay, episodeCount: episodes.length, extraction })
+    result_json: JSON.stringify({
+      ...persisted,
+      skipped: !persisted.summaryId && persisted.factIds.length === 0 ? 'no_summary' : undefined,
+      localDay: payload.localDay,
+      episodeCount: episodes.length,
+      extraction
+    })
   });
 }
 
@@ -276,6 +295,65 @@ async function embedMemoryItemJob(job: MemoryJobRow) {
 async function embedMissingMemoriesJob(job: MemoryJobRow) {
   const result = await embedMissingMemories();
   updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify(result) });
+}
+
+async function deleteGraphSummaryJob(job: MemoryJobRow) {
+  const payload = parsePayload<{ summaryId: number }>(job);
+  await deleteConversationSummaryFromGraph(payload.summaryId);
+  upsertGraphSyncState({
+    source_type: 'conversation_summary',
+    source_id: payload.summaryId,
+    status: 'deleted',
+    synced_at: Date.now()
+  });
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify({ ok: true }) });
+}
+
+async function retractGraphFactJob(job: MemoryJobRow) {
+  const payload = parsePayload<{ factId: number }>(job);
+  await markGraphRelationsBySourceStatus('fact', payload.factId, 'retracted');
+  upsertGraphSyncState({
+    source_type: 'fact',
+    source_id: payload.factId,
+    status: 'retracted',
+    synced_at: Date.now()
+  });
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify({ ok: true }) });
+}
+
+async function deleteGraphFactJob(job: MemoryJobRow) {
+  const payload = parsePayload<{ factId: number }>(job);
+  await deleteGraphRelationsBySource('fact', payload.factId);
+  upsertGraphSyncState({
+    source_type: 'fact',
+    source_id: payload.factId,
+    status: 'deleted',
+    synced_at: Date.now()
+  });
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify({ ok: true }) });
+}
+
+async function rebuildGraphJob(job: MemoryJobRow) {
+  await clearGraphProjection();
+  const summaries = listConversationSummaries({ limit: 500 });
+  let synced = 0;
+  for (const summary of summaries) {
+    if ((summary.status ?? 'active') !== 'active' || summary.recall_policy === 'never') continue;
+    await syncConversationSummaryToGraph({
+      summary,
+      extraction: { importance: summary.importance, facts: [], entities: [], relations: [], decisions: [] },
+      sources: listMemorySources('conversation_summary', summary.id)
+    });
+    upsertGraphSyncState({
+      source_type: 'conversation_summary',
+      source_id: summary.id,
+      neo4j_element_id: `summary:${summary.id}`,
+      synced_at: Date.now(),
+      status: 'synced'
+    });
+    synced += 1;
+  }
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify({ synced }) });
 }
 
 async function syncSummaryJob(job: MemoryJobRow) {

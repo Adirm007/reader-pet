@@ -14,11 +14,13 @@ import { getConfig, getActiveProvider } from './config';
 import { buildSystemPrompt, loadPersonas, INNER_MONOLOGUE_PREFILL, parseInnerMonologue } from './personas-loader';
 import { chat as providerChat } from './providers';
 import { recentEpisodes, listFacts } from './memory/store';
+import { enqueueMissingDailyDigestsForRecentDays, kickMemoryWorker } from './memory/jobs';
 import { recordMonologue } from './inner-monologue-log';
 import type { ChatMessage } from '../shared/types';
 
 interface ProactiveState {
   lastLetterDate: string;     // YYYY-MM-DD (本地)
+  lastDailyDigestDate: string;
   lastChatterAt: number;      // ms
 }
 
@@ -27,12 +29,13 @@ function getStateStore(): Store<ProactiveState> {
   if (stateStore) return stateStore;
   stateStore = new Store<ProactiveState>({
     name: 'reader-pet-proactive',
-    defaults: { lastLetterDate: '', lastChatterAt: 0 }
+    defaults: { lastLetterDate: '', lastDailyDigestDate: '', lastChatterAt: 0 }
   });
   return stateStore;
 }
 
 let letterTimer: NodeJS.Timeout | null = null;
+let dailyDigestTimer: NodeJS.Timeout | null = null;
 let chatterTimer: NodeJS.Timeout | null = null;
 let getPetWindow: () => BrowserWindow | null = () => null;
 
@@ -157,6 +160,62 @@ function armLetterTimer() {
   setTimeout(() => void tryFireDailyLetter(), 30 * 1000);
 }
 
+// ============ 日记归纳 ============
+
+function dailyDigestReady(cfg = getConfig()): boolean {
+  return !!cfg.memory.digestionEnabled && !!getActiveProvider();
+}
+
+function hasReachedDailyDigestTime(): boolean {
+  const cfg = getConfig().memory;
+  const now = new Date();
+  const targetHour = Math.max(0, Math.min(23, Math.floor(cfg.dailyDigestHour ?? 23)));
+  const targetMinute = Math.max(0, Math.min(59, Math.floor(cfg.dailyDigestMinute ?? 30)));
+  return now.getHours() > targetHour || (now.getHours() === targetHour && now.getMinutes() >= targetMinute);
+}
+
+function enqueueRecentMissingDigests(minUncoveredEpisodes?: number) {
+  const cfg = getConfig();
+  return enqueueMissingDailyDigestsForRecentDays({
+    personaId: cfg.activePersonaId,
+    lookbackDays: cfg.memory.dailyDigestLookbackDays ?? 30,
+    maxEpisodesPerRange: cfg.memory.dailyDigestMaxEpisodesPerRange ?? 60,
+    minUncoveredEpisodes
+  });
+}
+
+function tryFireScheduledDailyDigest() {
+  const cfg = getConfig();
+  if (!cfg.memory.autoDailyDigestEnabled || !dailyDigestReady(cfg)) return;
+  if (!hasReachedDailyDigestTime()) return;
+  const today = todayLocalDate();
+  const store = getStateStore();
+  if (store.get('lastDailyDigestDate') === today) return;
+  const result = enqueueRecentMissingDigests();
+  store.set('lastDailyDigestDate', today);
+  if (result.enqueued > 0) kickMemoryWorker();
+}
+
+function tryFireStartupDigestCheck() {
+  const cfg = getConfig();
+  if (!cfg.memory.startupDigestEnabled || !dailyDigestReady(cfg)) return;
+  const minEpisodes = Math.max(1, Math.floor(cfg.memory.startupDigestMinEpisodes ?? 30));
+  const result = enqueueRecentMissingDigests(minEpisodes);
+  if (result.enqueued > 0) kickMemoryWorker();
+}
+
+function armDailyDigestTimer() {
+  if (dailyDigestTimer) {
+    clearInterval(dailyDigestTimer);
+    dailyDigestTimer = null;
+  }
+  dailyDigestTimer = setInterval(() => {
+    tryFireScheduledDailyDigest();
+  }, 10 * 60 * 1000);
+  setTimeout(() => tryFireStartupDigestCheck(), 30 * 1000);
+  setTimeout(() => tryFireScheduledDailyDigest(), 30 * 1000);
+}
+
 // ============ 话痨模式 ============
 
 async function generateChatter(): Promise<string | null> {
@@ -270,6 +329,7 @@ export function noteUserInteraction() {
 
 export function startProactive() {
   armLetterTimer();
+  armDailyDigestTimer();
   armChatterTimer();
 }
 
@@ -277,6 +337,10 @@ export function stopProactive() {
   if (letterTimer) {
     clearInterval(letterTimer);
     letterTimer = null;
+  }
+  if (dailyDigestTimer) {
+    clearInterval(dailyDigestTimer);
+    dailyDigestTimer = null;
   }
   if (chatterTimer) {
     clearTimeout(chatterTimer);
@@ -287,6 +351,7 @@ export function stopProactive() {
 // 配置变更后调用 — 重新读取间隔/开关
 export function rescheduleProactive() {
   armLetterTimer();
+  armDailyDigestTimer();
   armChatterTimer();
 }
 

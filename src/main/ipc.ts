@@ -237,6 +237,15 @@ export function registerIpc(
     kickMemoryWorker();
     return { ok: true };
   });
+  ipcMain.handle('mem:rebuildGraph', () => {
+    enqueueMemoryJob({
+      type: 'graph_rebuild_all',
+      dedupe_key: `graph_rebuild_all:${Date.now()}`,
+      payload_json: '{}'
+    });
+    kickMemoryWorker();
+    return { ok: true };
+  });
 
   // 主动行为
   ipcMain.handle('proactive:triggerLetter', () => triggerLetterNow());

@@ -78,12 +78,12 @@ Live2D `.model3.json` 目前还没有接入，只预留了配置槽。
 额外包含：
 
 - conversation summaries（带 `status` 与 `recall_policy`，聊天召回只取 active + always/on_topic）
-- daily digest：按 episode range 覆盖情况补写日记式摘要，不用“今天是否写过”这种粗粒度 flag
+- daily digest：按 episode range 覆盖情况补写日记式摘要，不用“今天是否写过”这种粗粒度 flag；可每日定点归纳，也可启动时按未覆盖 episode 数量自动补归纳
 - important digest：每轮默认只写 episode；只有命中“记住 / 别忘 / 以后 / 不要再 / 你记错了 / 这很重要 / 称呼与边界变化”等本地触发时，才即时整理长期事实或重要摘要
-- memory jobs（有限退避自动重试 30s/2m/10m，启动时回收 stale running，避免卡死）
+- memory jobs（有限退避自动重试 30s/2m/10m，启动时回收 stale running，避免卡死；重试耗尽后会通过桌宠气泡提示失败的 job 类型与错误摘要）
 - memory sources（每条长期记忆都可追溯到原始 episode/任务来源）
-- graph sync state
-- 可选 Neo4j 图记忆写入 / 召回
+- graph sync state：记录 SQLite 记忆与 Neo4j 投影同步状态
+- 可选 Neo4j 图记忆写入 / 召回；删除摘要、撤回/删除事实时会同步清理或标记图谱关系，设置页支持重建图谱投影
 - 可选 digestion worker，用当前 Provider 做 daily / important 摘要与事实抽取；开启后也不会把每轮普通对话都送去 digest
 - 可选 embedding 向量索引与向量召回：
   - 单独配置 embedding provider + model（默认复用激活 Provider）
@@ -97,8 +97,9 @@ Live2D `.model3.json` 目前还没有接入，只预留了配置槽。
   - 召回上下文会同时标出 rerank score 与 vector score，便于调试
 - 聊天召回是 intent-aware：显式回忆 / 任务相关 / 个人事实 / 寒暄等不同意图走不同召回路径，避免无脑塞 30 条事实
 - facts、summaries、vector recall 与 episode search 会按 global / persona / project scope 过滤，避免不同人格或项目的记忆串线
+- Profile 设置页只维护用户手写的基础事实；自动沉淀的 semantic facts、conversation summaries 和任务记忆统一在记忆系统页管理
 
-Neo4j、digestion、embedding、向量召回、Reranker 精排均默认关闭，需要时在设置页打开。记忆设置页支持手动“检查并补写日记摘要”，它只会为未覆盖的 episode range 入队 daily digest，不会删除原始历史。
+Neo4j、digestion、embedding、向量召回、Reranker 精排均默认关闭，需要时在设置页打开。每日定点归纳和启动补归纳开关属于 memory 配置，只有在 digestion 可用且已配置 Provider 时才会实际入队。记忆设置页支持手动“检查并补写日记摘要”，它只会为未覆盖的 episode range 入队 daily digest，不会删除原始历史。
 
 ### Claude Code 集成
 
@@ -269,6 +270,7 @@ npm run package:dir
 - Claude Code hook bridge 端口
 - GPT-SoVITS 地址与参考音频
 - Neo4j 地址、账号、密码
+- Embedding Provider 与模型名
 - Reranker URL、API Key、模型名、Top K 与最低分数
 - 安全模式文件白名单
 - Shell 白名单
@@ -310,7 +312,7 @@ resources/                 打包资源、精灵图、立绘等
 - CLI-Anything：结构化外部工具可选，需要用户自行配置本地命令。当前固定 v1 one-shot JSON stdin/stdout 协议：应用向 stdin 写入 `{ version: 1, input, schema }`，外部 CLI 应在 stdout 返回 JSON object，推荐 `{ ok: true, result }` 或 `{ ok: false, error }`。需要工具发现、长期会话、流式输出或复杂 allowlist 时优先使用 MCP。
 - MCP 插件：长期插件优先采用 MCP server。Reader Pet 负责配置、启动/连接、握手、列举 tools/resources/prompts、tool allowlist、调用与 emergency stop；插件作者负责提供本地 server 命令或 HTTP endpoint，不由 Reader Pet 自动安装第三方依赖。
 - 桌面自动化 provider：当前已有 PowerShell provider MVP，支持 JSON 动作队列 dry-run / run / stop；真实 run 会操作当前桌面。`nutjs` 仍只是预留选项。
-- Neo4j：图记忆可选，不配置则不启用。
+- Neo4j：图记忆可选，不配置则不启用；SQLite 是权威记忆库，Neo4j 只是可重建的图谱投影。
 - GPT-SoVITS：TTS 可选，需要用户自行启动服务。
 - Claude Code：工程任务派发与 Stop hook 需要本机安装 Claude Code CLI。
 

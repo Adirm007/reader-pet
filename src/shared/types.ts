@@ -166,6 +166,13 @@ export interface MemoryConfig {
   graphWriteEnabled: boolean;
   graphRecallEnabled: boolean;
   digestionEnabled: boolean;
+  autoDailyDigestEnabled: boolean;
+  dailyDigestHour: number;
+  dailyDigestMinute: number;
+  startupDigestEnabled: boolean;
+  startupDigestMinEpisodes: number;
+  dailyDigestLookbackDays: number;
+  dailyDigestMaxEpisodesPerRange: number;
   graphRecallTimeoutMs: number;
   embeddingEnabled: boolean;
   embeddingProviderId?: string;

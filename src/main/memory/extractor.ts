@@ -150,8 +150,8 @@ async function extractWithPrompt(systemPrompt: string, source: string, maxTokens
   });
   try {
     return normalizeExtraction(JSON.parse(cleanJsonText(resp.text ?? '')));
-  } catch {
-    return EMPTY_EXTRACTION;
+  } catch (e: any) {
+    throw new Error(`记忆整理器返回了无效 JSON: ${e?.message ?? String(e)}`);
   }
 }
 

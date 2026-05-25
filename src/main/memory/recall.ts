@@ -94,6 +94,12 @@ function scopeBoost(scope?: string): number {
   return 0.5;
 }
 
+function recencyScore(ts?: number): number {
+  if (!ts) return 0;
+  const ageDays = Math.max(0, (Date.now() - ts) / 86_400_000);
+  return Math.exp(-ageDays / 45);
+}
+
 function analyzeRecallIntent(input: string) {
   const trimmed = input.trim();
   const explicitRecall = includesAny(trimmed, RECALL_TRIGGERS);
@@ -129,9 +135,14 @@ export async function buildMemoryContext(input: { userInput: string; personaId: 
       .map((f) => {
         const text = `${f.subject} ${f.predicate} ${f.object}`;
         const relevance = intent.shouldUseDeepRecall ? lexicalScore(intent.query, text) : 0;
-        const recency = Math.min(1, (f.updated_at ?? f.created_at ?? 0) / Math.max(1, Date.now()));
+        const recency = recencyScore(f.updated_at ?? f.created_at);
         const usage = Math.min(1, Math.log1p(f.use_count ?? 0) / 5);
-        return { fact: f, score: relevance * 0.55 + scopeBoost(f.scope) * 0.25 + recency * 0.1 + usage * 0.1 };
+        return { fact: f, relevance, score: relevance * 0.7 + scopeBoost(f.scope) * 0.1 + recency * 0.1 + usage * 0.1 };
+      })
+      .filter(({ fact, relevance, score }) => {
+        if ((fact.recall_policy ?? 'on_topic') === 'always') return true;
+        if (!intent.shouldUseDeepRecall) return false;
+        return relevance > 0 && score >= 0.18;
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, intent.shouldUseDeepRecall ? 12 : 6);

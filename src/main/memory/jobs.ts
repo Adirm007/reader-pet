@@ -1,3 +1,4 @@
+import type { BrowserWindow } from 'electron';
 import { getConfig } from '../config';
 import {
   claimNextMemoryJob,
@@ -6,8 +7,22 @@ import {
   findUncoveredRanges,
   getEpisodeBoundsForLocalDay,
   listDailyDigestCoverage,
+  nextPendingMemoryJobRunAt,
   recoverStaleMemoryJobs
 } from './store';
+
+function localDateString(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function countRangeEpisodes(range: { episodeStartId: number; episodeEndId: number }): number {
+  return Math.max(0, range.episodeEndId - range.episodeStartId + 1);
+}
 import { processMemoryJob } from './digestion';
 
 export type ImportantTriggerKind =
@@ -42,9 +57,43 @@ export function detectImportantTrigger(text: string): ImportantTriggerKind | nul
   return null;
 }
 
+const MEMORY_JOB_TYPES = [
+  'digest_important_episode_pair',
+  'digest_diary_range',
+  'digest_episode_pair',
+  'graph_sync_summary',
+  'graph_delete_summary',
+  'graph_retract_fact',
+  'graph_delete_fact',
+  'graph_rebuild_all',
+  'embed_memory_item',
+  'embed_missing_memories'
+];
+
 let running = false;
 let stopped = true;
 let timer: NodeJS.Timeout | null = null;
+let getPetWindow: () => BrowserWindow | null = () => null;
+let lastFailureNoticeAt = 0;
+
+export function setMemoryJobPetWindowGetter(fn: () => BrowserWindow | null) {
+  getPetWindow = fn;
+}
+
+function notifyMemoryJobFailure(jobType: string, error: string) {
+  const now = Date.now();
+  if (now - lastFailureNoticeAt < 60_000) return;
+  lastFailureNoticeAt = now;
+  const win = getPetWindow();
+  if (!win || win.isDestroyed()) return;
+  const shortError = error.replace(/\s+/g, ' ').slice(0, 180);
+  win.webContents.send('pet:bubble', {
+    text: `记忆后台任务 ${jobType} 重试后仍失败：${shortError}`,
+    kind: 'memory-error',
+    ts: now
+  });
+  if (!win.isVisible()) win.show();
+}
 
 export function enqueueDigestEpisodePair(input: {
   userEpisodeId: number;
@@ -88,33 +137,91 @@ export function enqueueMissingDailyDigests(input: {
   personaId: string;
   localDay: string;
   maxEpisodesPerRange?: number;
-}): { enqueued: number; ranges: Array<{ episodeStartId: number; episodeEndId: number }> } {
+}): { enqueued: number; uncoveredEpisodes: number; ranges: Array<{ episodeStartId: number; episodeEndId: number }> } {
   const bounds = getEpisodeBoundsForLocalDay({ personaId: input.personaId, localDay: input.localDay });
-  if (!bounds) return { enqueued: 0, ranges: [] };
+  if (!bounds) return { enqueued: 0, uncoveredEpisodes: 0, ranges: [] };
   const covered = listDailyDigestCoverage({
     personaId: input.personaId,
     episodeStartId: bounds.episodeStartId,
     episodeEndId: bounds.episodeEndId
   });
   const gaps = findUncoveredRanges(bounds.episodeStartId, bounds.episodeEndId, covered);
-  const maxEpisodes = Math.max(2, Math.floor(input.maxEpisodesPerRange ?? 60));
+  const uncoveredEpisodes = gaps.reduce((sum, range) => sum + countRangeEpisodes(range), 0);
+  const ranges = splitDigestRanges(gaps, input.maxEpisodesPerRange);
+  const enqueued = enqueueDigestRanges(input.personaId, input.localDay, ranges);
+  return { enqueued, uncoveredEpisodes, ranges };
+}
+
+function splitDigestRanges(
+  gaps: Array<{ episodeStartId: number; episodeEndId: number }>,
+  maxEpisodesPerRange?: number
+): Array<{ episodeStartId: number; episodeEndId: number }> {
+  const maxEpisodes = Math.max(2, Math.floor(maxEpisodesPerRange ?? 60));
   const ranges: Array<{ episodeStartId: number; episodeEndId: number }> = [];
   for (const gap of gaps) {
     for (let start = gap.episodeStartId; start <= gap.episodeEndId; start += maxEpisodes) {
       ranges.push({ episodeStartId: start, episodeEndId: Math.min(gap.episodeEndId, start + maxEpisodes - 1) });
     }
   }
+  return ranges;
+}
+
+function enqueueDigestRanges(
+  personaId: string,
+  localDay: string,
+  ranges: Array<{ episodeStartId: number; episodeEndId: number }>
+): number {
   let enqueued = 0;
   for (const range of ranges) {
     const jobId = enqueueDigestDiaryRange({
-      personaId: input.personaId,
-      localDay: input.localDay,
+      personaId,
+      localDay,
       episodeStartId: range.episodeStartId,
       episodeEndId: range.episodeEndId
     });
     if (jobId) enqueued += 1;
   }
-  return { enqueued, ranges };
+  return enqueued;
+}
+
+export function enqueueMissingDailyDigestsForRecentDays(input: {
+  personaId: string;
+  lookbackDays: number;
+  maxEpisodesPerRange?: number;
+  minUncoveredEpisodes?: number;
+}): { enqueued: number; uncoveredEpisodes: number; ranges: Array<{ localDay: string; episodeStartId: number; episodeEndId: number }> } {
+  const lookbackDays = Math.max(1, Math.min(365, Math.floor(input.lookbackDays)));
+  const allRanges: Array<{ localDay: string; episodeStartId: number; episodeEndId: number }> = [];
+  let uncoveredEpisodes = 0;
+  for (let offset = 0; offset > -lookbackDays; offset--) {
+    const localDay = localDateString(offset);
+    const bounds = getEpisodeBoundsForLocalDay({ personaId: input.personaId, localDay });
+    if (!bounds) continue;
+    const covered = listDailyDigestCoverage({
+      personaId: input.personaId,
+      episodeStartId: bounds.episodeStartId,
+      episodeEndId: bounds.episodeEndId
+    });
+    const gaps = findUncoveredRanges(bounds.episodeStartId, bounds.episodeEndId, covered);
+    uncoveredEpisodes += gaps.reduce((sum, range) => sum + countRangeEpisodes(range), 0);
+    for (const range of splitDigestRanges(gaps, input.maxEpisodesPerRange)) {
+      allRanges.push({ localDay, ...range });
+    }
+  }
+  if (input.minUncoveredEpisodes !== undefined && uncoveredEpisodes < input.minUncoveredEpisodes) {
+    return { enqueued: 0, uncoveredEpisodes, ranges: allRanges };
+  }
+  let enqueued = 0;
+  for (const range of allRanges) {
+    const jobId = enqueueDigestDiaryRange({
+      personaId: input.personaId,
+      localDay: range.localDay,
+      episodeStartId: range.episodeStartId,
+      episodeEndId: range.episodeEndId
+    });
+    if (jobId) enqueued += 1;
+  }
+  return { enqueued, uncoveredEpisodes, ranges: allRanges };
 }
 
 export function startMemoryWorker() {
@@ -129,13 +236,20 @@ export function stopMemoryWorker() {
   timer = null;
 }
 
-export function kickMemoryWorker() {
+export function kickMemoryWorker(delayMs = 10) {
   if (stopped || running) return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
     void runWorkerLoop();
-  }, 10);
+  }, Math.max(10, delayMs));
+}
+
+function scheduleNextPendingJob() {
+  const nextRunAt = nextPendingMemoryJobRunAt(MEMORY_JOB_TYPES);
+  if (nextRunAt === undefined) return;
+  const delayMs = Math.max(10, nextRunAt - Date.now());
+  kickMemoryWorker(delayMs);
 }
 
 async function runWorkerLoop() {
@@ -143,24 +257,19 @@ async function runWorkerLoop() {
   running = true;
   try {
     while (!stopped) {
-      const job = claimNextMemoryJob([
-        'digest_important_episode_pair',
-        'digest_diary_range',
-        'digest_episode_pair',
-        'graph_sync_summary',
-        'embed_memory_item',
-        'embed_missing_memories'
-      ]);
+      const job = claimNextMemoryJob(MEMORY_JOB_TYPES);
       if (!job) break;
       try {
         await processMemoryJob(job);
       } catch (e: any) {
         const message = e?.message ?? String(e);
         const retryable = !/not found|不存在|unsupported|不支持|payload|JSON/i.test(message);
-        failOrRetryMemoryJob(job, message, retryable);
+        const result = failOrRetryMemoryJob(job, message, retryable);
+        if (result.status === 'failed') notifyMemoryJobFailure(job.type, message);
       }
     }
   } finally {
     running = false;
+    if (!stopped) scheduleNextPendingJob();
   }
 }

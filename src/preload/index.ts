@@ -103,7 +103,7 @@ const api = {
   ccIsBridgeRunning: (): Promise<boolean> => ipcRenderer.invoke('cc:isBridgeRunning'),
 
   // 桌宠气泡推送 (主进程 → 渲染)
-  onPetBubble: (cb: (payload: { text: string; kind: string; ts: number }) => void) => {
+  onPetBubble: (cb: (payload: { text: string; kind: 'task-report' | 'info' | 'daily-letter' | 'chatter' | 'memory-error' | string; ts: number }) => void) => {
     const listener = (_: unknown, payload: any) => cb(payload);
     ipcRenderer.on('pet:bubble', listener);
     return () => ipcRenderer.off('pet:bubble', listener);
@@ -164,6 +164,7 @@ const api = {
   memEnqueueMissingDailyDigests: (localDay?: string): Promise<{ ok: boolean; localDay: string; enqueued: number; ranges: Array<{ episodeStartId: number; episodeEndId: number }> }> =>
     ipcRenderer.invoke('mem:enqueueMissingDailyDigests', localDay),
   memBackfillEmbeddings: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:backfillEmbeddings'),
+  memRebuildGraph: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:rebuildGraph'),
 
   // 主动行为
   triggerLetter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>

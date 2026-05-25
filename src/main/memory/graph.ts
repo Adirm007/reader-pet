@@ -187,6 +187,54 @@ export async function syncConversationSummaryToGraph(input: {
   return { ok: true, neo4jElementId: summaryKey };
 }
 
+export async function deleteConversationSummaryFromGraph(summaryId: number): Promise<{ ok: true }> {
+  const cfg = getConfig().memory;
+  if (!cfg.graphEnabled || !cfg.graphWriteEnabled) return { ok: true };
+  await runGraphQuery(
+    `MATCH (s:ConversationSummary {sqlite_id: $summaryId})
+     DETACH DELETE s`,
+    { summaryId }
+  );
+  return { ok: true };
+}
+
+export async function markGraphRelationsBySourceStatus(
+  sourceType: string,
+  sourceId: number,
+  status: 'active' | 'retracted' | 'deleted'
+): Promise<{ ok: true }> {
+  const cfg = getConfig().memory;
+  if (!cfg.graphEnabled || !cfg.graphWriteEnabled) return { ok: true };
+  await runGraphQuery(
+    `MATCH ()-[r:REL]-()
+     WHERE r.source_type = $sourceType AND r.source_id = $sourceId
+     SET r.status = $status, r.updated_at = $now`,
+    { sourceType, sourceId, status, now: Date.now() }
+  );
+  return { ok: true };
+}
+
+export async function deleteGraphRelationsBySource(sourceType: string, sourceId: number): Promise<{ ok: true }> {
+  const cfg = getConfig().memory;
+  if (!cfg.graphEnabled || !cfg.graphWriteEnabled) return { ok: true };
+  await runGraphQuery(
+    `MATCH ()-[r:REL]-()
+     WHERE r.source_type = $sourceType AND r.source_id = $sourceId
+     DELETE r`,
+    { sourceType, sourceId }
+  );
+  return { ok: true };
+}
+
+export async function clearGraphProjection(): Promise<{ ok: true }> {
+  const cfg = getConfig().memory;
+  if (!cfg.graphEnabled || !cfg.graphWriteEnabled) return { ok: true };
+  await runGraphQuery(`MATCH ()-[r:REL]-() DELETE r`);
+  await runGraphQuery(`MATCH (n) WHERE n:ConversationSummary OR n:Source OR n:Entity DETACH DELETE n`);
+  schemaReady = false;
+  return { ok: true };
+}
+
 export async function recallGraphContext(input: {
   query: string;
   limit?: number;
@@ -201,6 +249,7 @@ export async function recallGraphContext(input: {
           OR any(a IN coalesce(e.aliases, []) WHERE toLower(a) CONTAINS toLower($q))
        WITH e LIMIT 5
        MATCH (e)-[r:REL*1..2]-(x)
+       WHERE all(rel IN r WHERE coalesce(rel.status, 'active') = 'active')
        RETURN e.name AS start, x.name AS other, x.title AS otherTitle,
               [rel IN r | rel.predicate] AS predicates,
               [rel IN r | rel.qualifier] AS qualifiers,

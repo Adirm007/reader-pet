@@ -590,6 +590,13 @@ export function setFactStatus(id: number, status: FactStatus) {
   }
   if (status !== 'active') {
     db.prepare(`UPDATE facts SET status = ? WHERE id = ?`).run(status, id);
+    if (status === 'retracted') {
+      enqueueMemoryJob({
+        type: 'graph_retract_fact',
+        dedupe_key: `graph_retract_fact:${id}:${Date.now()}`,
+        payload_json: JSON.stringify({ factId: id })
+      });
+    }
     return;
   }
   db.transaction(() => {
@@ -739,6 +746,11 @@ function requireFactStatus(status: string): FactStatus {
 
 export function deleteFact(id: number) {
   const db = getDb();
+  enqueueMemoryJob({
+    type: 'graph_delete_fact',
+    dedupe_key: `graph_delete_fact:${id}:${Date.now()}`,
+    payload_json: JSON.stringify({ factId: id })
+  });
   db.transaction(() => {
     db.prepare(`DELETE FROM memory_embeddings WHERE memory_type = 'fact' AND memory_id = ?`).run(id);
     db.prepare(`DELETE FROM memory_sources WHERE memory_type = 'fact' AND memory_id = ?`).run(id);
@@ -971,6 +983,11 @@ export function getConversationSummaryById(id: number): ConversationSummaryRow |
 
 export function deleteConversationSummary(id: number) {
   const db = getDb();
+  enqueueMemoryJob({
+    type: 'graph_delete_summary',
+    dedupe_key: `graph_delete_summary:${id}:${Date.now()}`,
+    payload_json: JSON.stringify({ summaryId: id })
+  });
   db.transaction(() => {
     db.prepare(`DELETE FROM memory_embeddings WHERE memory_type = 'conversation_summary' AND memory_id = ?`).run(id);
     db.prepare(`DELETE FROM memory_sources WHERE memory_type = 'conversation_summary' AND memory_id = ?`).run(id);
@@ -1121,21 +1138,38 @@ function retryDelayMs(attempts: number): number {
   return 600_000;
 }
 
-export function failOrRetryMemoryJob(job: MemoryJobRow, error: string, retryable = true) {
+export function failOrRetryMemoryJob(job: MemoryJobRow, error: string, retryable = true): { status: 'retry'; nextRunAt: number } | { status: 'failed' } {
   const now = Date.now();
   const attempts = Number(job.attempts ?? 0);
   const maxAttempts = Number(job.max_attempts ?? 3);
   if (retryable && attempts < maxAttempts) {
+    const nextRunAt = now + retryDelayMs(attempts);
     getDb()
       .prepare(
         `UPDATE memory_jobs
          SET status = 'pending', finished_at = ?, next_run_at = ?, error = ?
          WHERE id = ?`
       )
-      .run(now, now + retryDelayMs(attempts), error, job.id);
-    return;
+      .run(now, nextRunAt, error, job.id);
+    return { status: 'retry', nextRunAt };
   }
   updateMemoryJob(job.id, { status: 'failed', finished_at: now, error });
+  return { status: 'failed' };
+}
+
+export function nextPendingMemoryJobRunAt(types: string[]): number | undefined {
+  if (!types.length) return undefined;
+  const placeholders = types.map(() => '?').join(',');
+  const row = getDb()
+    .prepare(
+      `SELECT MIN(COALESCE(next_run_at, 0)) AS nextRunAt
+       FROM memory_jobs
+       WHERE status = 'pending'
+         AND type IN (${placeholders})
+         AND attempts < max_attempts`
+    )
+    .get(...types) as { nextRunAt?: number | null } | undefined;
+  return row?.nextRunAt ?? undefined;
 }
 
 export function recoverStaleMemoryJobs(opts?: { olderThanMs?: number }) {

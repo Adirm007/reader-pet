@@ -169,6 +169,13 @@ export default function MemorySection() {
     setGraphStats(await window.api.memGraphStats());
   };
 
+  const rebuildGraph = async () => {
+    if (!confirm('清空 reader-pet 管理的 Neo4j 图谱投影，并从 SQLite 长期摘要重建?')) return;
+    await window.api.memRebuildGraph();
+    setGraphMessage('已入队重建 Neo4j 图谱。');
+    refresh();
+  };
+
   const enqueueDailyDigest = async () => {
     const result = await window.api.memEnqueueMissingDailyDigests();
     setDailyDigestMessage(`${result.localDay} 已检查，入队 ${result.enqueued} 段日记摘要。`);
@@ -235,100 +242,56 @@ export default function MemorySection() {
             <div className="memory-concept-card"><strong>内心独白日志</strong><span>角色内思考和调试观察，不进入 SQLite 语义记忆和图谱。</span></div>
           </div>
           <div className="form-card" style={{ marginBottom: 12 }}>
-            <h3 style={{ marginTop: 0 }}>Neo4j 图谱记忆</h3>
+            <h3 style={{ marginTop: 0 }}>记忆整理</h3>
             <label className="checkbox-row">
               <input type="checkbox" checked={cfg.memory.digestionEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, digestionEnabled: e.target.checked } })} />
               启用后台记忆整理
             </label>
             <label className="checkbox-row">
-              <input type="checkbox" checked={cfg.memory.graphEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphEnabled: e.target.checked } })} />
-              启用 Neo4j
+              <input type="checkbox" checked={cfg.memory.autoDailyDigestEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, autoDailyDigestEnabled: e.target.checked } })} />
+              每日定点归纳
             </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={cfg.memory.graphWriteEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphWriteEnabled: e.target.checked } })} />
-              写入图谱
-            </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={cfg.memory.graphRecallEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphRecallEnabled: e.target.checked } })} />
-              聊天时图谱召回
-            </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={cfg.memory.embeddingEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingEnabled: e.target.checked } })} />
-              启用 Embedding 向量索引
-            </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={cfg.memory.vectorRecallEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorRecallEnabled: e.target.checked } })} />
-              聊天时向量召回
-            </label>
-            <label>
-              Embedding Provider
-              <select value={cfg.memory.embeddingProviderId ?? ''} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingProviderId: e.target.value || undefined } })}>
-                <option value="">使用当前激活 Provider</option>
-                {cfg.providers.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
-              </select>
-            </label>
-            <label>
-              Embedding Model
-              <input value={cfg.memory.embeddingModel} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingModel: e.target.value } })} placeholder="例如 text-embedding-3-small / text-embedding-004" />
-            </label>
-            <label>
-              Vector Recall Limit
-              <input type="number" min={1} max={20} value={cfg.memory.vectorRecallLimit} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorRecallLimit: Number(e.target.value) } })} />
-            </label>
-            <label>
-              Vector Min Score
-              <input type="number" min={0} max={1} step={0.01} value={cfg.memory.vectorMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorMinScore: Number(e.target.value) } })} />
-            </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={cfg.memory.rerankEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankEnabled: e.target.checked } })} />
-              启用 Reranker 精排
-            </label>
-            <label>
-              Reranker URL
-              <input value={cfg.memory.rerankUrl} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankUrl: e.target.value } })} placeholder="例如 http://127.0.0.1:8000/v1/rerank" />
-            </label>
-            <label>
-              Reranker API Key (可选)
-              <input type="password" value={cfg.memory.rerankApiKey} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankApiKey: e.target.value } })} />
-            </label>
-            <label>
-              Reranker Model
-              <input value={cfg.memory.rerankModel} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankModel: e.target.value } })} placeholder="例如 bge-reranker-v2-m3 / jina-reranker-v2-base-multilingual" />
-            </label>
-            <label>
-              Rerank Top K
-              <input type="number" min={1} max={20} value={cfg.memory.rerankTopK} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankTopK: Number(e.target.value) } })} />
-            </label>
-            <label>
-              Rerank Min Score
-              <input type="number" min={0} max={1} step={0.01} value={cfg.memory.rerankMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankMinScore: Number(e.target.value) } })} />
-            </label>
-            <label>
-              Neo4j URI
-              <input value={cfg.memory.neo4jUri} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jUri: e.target.value } })} />
-            </label>
-            <label>
-              User
-              <input value={cfg.memory.neo4jUser} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jUser: e.target.value } })} />
-            </label>
-            <label>
-              Password
-              <input type="password" value={cfg.memory.neo4jPassword} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jPassword: e.target.value } })} />
-            </label>
-            <div className="form-actions">
-              <button className="primary" onClick={saveMemoryConfig}>保存配置</button>
-              <button onClick={testGraph}>测试 Neo4j 连接</button>
-              <button onClick={async () => { await window.api.memKickDigestion(); refresh(); }}>整理 pending job</button>
-              <button onClick={enqueueDailyDigest}>检查并补写日记摘要</button>
-              <button onClick={async () => { await window.api.memBackfillEmbeddings(); refresh(); }}>补齐向量索引</button>
-            </div>
+            <label>每日归纳时间<input type="time" value={`${String(cfg.memory.dailyDigestHour ?? 23).padStart(2, '0')}:${String(cfg.memory.dailyDigestMinute ?? 30).padStart(2, '0')}`} onChange={(e) => { const [hour, minute] = e.target.value.split(':').map(Number); setCfg({ ...cfg, memory: { ...cfg.memory, dailyDigestHour: hour, dailyDigestMinute: minute } }); }} /></label>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.startupDigestEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, startupDigestEnabled: e.target.checked } })} />启动时检查未归档内容</label>
+            <label>启动补归纳阈值<input type="number" min={1} max={500} value={cfg.memory.startupDigestMinEpisodes ?? 30} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, startupDigestMinEpisodes: Number(e.target.value) } })} /></label>
+            <label>回溯天数<input type="number" min={1} max={365} value={cfg.memory.dailyDigestLookbackDays ?? 30} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, dailyDigestLookbackDays: Number(e.target.value) } })} /></label>
+            <label>每段最大 Episode<input type="number" min={2} max={200} value={cfg.memory.dailyDigestMaxEpisodesPerRange ?? 60} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, dailyDigestMaxEpisodesPerRange: Number(e.target.value) } })} /></label>
+            <div className="form-actions"><button onClick={async () => { await window.api.memKickDigestion(); refresh(); }}>整理 pending job</button><button onClick={enqueueDailyDigest}>检查并补写今日摘要</button></div>
             {dailyDigestMessage && <p className="muted">{dailyDigestMessage} 只补写未覆盖 episode range，不会删除原始历史。</p>}
-            {graphMessage && <p className="muted">{graphMessage}</p>}
           </div>
-          <p className="muted">
-            Neo4j: {graphStats?.ok ? `connected · nodes ${graphStats.nodes} · relations ${graphStats.relationships}` : graphStats?.message ?? '未测试'}
-          </p>
-          {stats && <p className="muted">Graph sync: synced {stats.graphSynced} ｜ failed {stats.graphFailed}</p>}
+          <div className="form-card" style={{ marginBottom: 12 }}>
+            <h3 style={{ marginTop: 0 }}>向量召回</h3>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.embeddingEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingEnabled: e.target.checked } })} />启用 Embedding 向量索引</label>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.vectorRecallEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorRecallEnabled: e.target.checked } })} />聊天时向量召回</label>
+            <label>Embedding Provider<select value={cfg.memory.embeddingProviderId ?? ''} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingProviderId: e.target.value || undefined } })}><option value="">使用当前激活 Provider</option>{cfg.providers.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select></label>
+            <label>Embedding Model<input value={cfg.memory.embeddingModel} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingModel: e.target.value } })} placeholder="例如 text-embedding-3-small / text-embedding-004" /></label>
+            <label>Vector Recall Limit<input type="number" min={1} max={20} value={cfg.memory.vectorRecallLimit} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorRecallLimit: Number(e.target.value) } })} /></label>
+            <label>Vector Min Score<input type="number" min={0} max={1} step={0.01} value={cfg.memory.vectorMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorMinScore: Number(e.target.value) } })} /></label>
+            <div className="form-actions"><button onClick={async () => { await window.api.memBackfillEmbeddings(); refresh(); }}>补齐向量索引</button></div>
+          </div>
+          <div className="form-card" style={{ marginBottom: 12 }}>
+            <h3 style={{ marginTop: 0 }}>Reranker 精排</h3>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.rerankEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankEnabled: e.target.checked } })} />启用 Reranker 精排</label>
+            <label>Reranker URL<input value={cfg.memory.rerankUrl} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankUrl: e.target.value } })} placeholder="例如 http://127.0.0.1:8000/v1/rerank" /></label>
+            <label>Reranker API Key (可选)<input type="password" value={cfg.memory.rerankApiKey} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankApiKey: e.target.value } })} /></label>
+            <label>Reranker Model<input value={cfg.memory.rerankModel} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankModel: e.target.value } })} placeholder="例如 bge-reranker-v2-m3 / jina-reranker-v2-base-multilingual" /></label>
+            <label>Rerank Top K<input type="number" min={1} max={20} value={cfg.memory.rerankTopK} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankTopK: Number(e.target.value) } })} /></label>
+            <label>Rerank Min Score<input type="number" min={0} max={1} step={0.01} value={cfg.memory.rerankMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, rerankMinScore: Number(e.target.value) } })} /></label>
+          </div>
+          <div className="form-card" style={{ marginBottom: 12 }}>
+            <h3 style={{ marginTop: 0 }}>Neo4j 图谱</h3>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.graphEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphEnabled: e.target.checked } })} />启用 Neo4j</label>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.graphWriteEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphWriteEnabled: e.target.checked } })} />写入图谱</label>
+            <label className="checkbox-row"><input type="checkbox" checked={cfg.memory.graphRecallEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphRecallEnabled: e.target.checked } })} />聊天时图谱召回</label>
+            <label>Neo4j URI<input value={cfg.memory.neo4jUri} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jUri: e.target.value } })} /></label>
+            <label>User<input value={cfg.memory.neo4jUser} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jUser: e.target.value } })} /></label>
+            <label>Password<input type="password" value={cfg.memory.neo4jPassword} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jPassword: e.target.value } })} /></label>
+            <div className="form-actions"><button onClick={testGraph}>测试 Neo4j 连接</button><button className="danger" onClick={rebuildGraph}>重建 Neo4j 图谱</button></div>
+            {graphMessage && <p className="muted">{graphMessage}</p>}
+            <p className="muted">Neo4j: {graphStats?.ok ? `connected · nodes ${graphStats.nodes} · relations ${graphStats.relationships}` : graphStats?.message ?? '未测试'}</p>
+            {stats && <p className="muted">Graph sync: synced {stats.graphSynced} ｜ failed {stats.graphFailed}</p>}
+          </div>
+          <div className="form-actions" style={{ marginBottom: 12 }}><button className="primary" onClick={saveMemoryConfig}>保存配置</button></div>
         </div>
       )}
 
@@ -396,7 +359,7 @@ export default function MemorySection() {
 
       {tab === 'jobs' && (
         <div>
-          <p className="memory-debug-note">后台整理任务用于把对话证据提炼为长期记忆。失败的 job 可以重试。</p>
+          <p className="memory-debug-note">后台整理任务用于把对话证据提炼为长期记忆。任务失败会按退避时间自动重试；重试耗尽后会在桌宠气泡提示，并可在这里手动 retry。</p>
           <table className="cap-table"><thead><tr><th>ID</th><th>类型</th><th>状态</th><th>尝试</th><th>创建</th><th>开始</th><th>下次</th><th>错误</th><th></th></tr></thead><tbody>
             {jobs.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
             {jobs.map((j) => <tr key={j.id}><td>{j.id}</td><td>{j.type}</td><td>{j.status}</td><td>{j.attempts}/{j.max_attempts ?? 3}</td><td>{new Date(j.created_at).toLocaleString()}</td><td>{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</td><td>{j.next_run_at ? new Date(j.next_run_at).toLocaleString() : '-'}</td><td>{(j.error ?? '').slice(0, 220)}</td><td>{j.status === 'failed' && <button className="mini" onClick={async () => { await window.api.memRetryJob(j.id); refresh(); }}>retry</button>}</td></tr>)}

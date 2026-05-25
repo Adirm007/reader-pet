@@ -69,7 +69,7 @@ export default function ProfileSection({
 
       <h3 style={{ marginTop: 18 }}>她应当记得的事实</h3>
       <p className="muted">
-        每条独立一行, 都会作为长期事实注入。 删除时她会真的忘记。 后续记忆系统上线后, 她也会自己向这里追加。
+        每条独立一行, 都会作为基础长期事实直接注入。 删除时她会真的忘记。 自动沉淀的语义事实请到「记忆系统」里查看和管理。
       </p>
       <ul className="fact-list">
         {facts.map((f, i) => (
