@@ -27,8 +27,34 @@ export interface CapabilityFlags {
   shellAllowList: string[];
   screenCaptureRequireConfirm: boolean;
   // 危险模式专属能力 (即便在危险模式下也要求各自单独开启)
-  playwrightEnabled: boolean;       // 浏览器自动化
+  playwrightEnabled: boolean;       // 浏览器自动化 / Playwright MCP
   memoryRWEnabled: boolean;          // 游戏内存读写 (Cheat Engine 风格)
+  mcpEnabled: boolean;               // 通用 MCP 插件
+  maaEnabled: boolean;               // MAA / MaaFramework
+  cliAnythingEnabled: boolean;       // CLI-Anything 风格结构化外部工具
+  desktopAutomationEnabled: boolean; // 鼠标/键盘桌面自动化
+  screenObservationEnabled: boolean; // 连续屏幕观察
+}
+
+export interface McpServerConfig {
+  id: string;
+  displayName: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  enabled: boolean;
+  riskLevel: 'medium' | 'high' | 'critical';
+}
+
+export interface AutomationConfig {
+  playwrightMcpCommand: string;
+  playwrightMcpArgs: string[];
+  playwrightMcpCwd?: string;
+  maaCommand: string;
+  maaWorkingDir: string;
+  cliAnythingCommand: string;
+  cliAnythingWorkingDir: string;
+  desktopAutomationProvider: 'none' | 'nutjs' | 'powershell';
 }
 
 export interface ClaudeCodeConfig {
@@ -133,6 +159,10 @@ export interface AppConfig {
   safetyMode: SafetyMode;
   safetyModeLastChangedAt: number;
   capabilities: CapabilityFlags;
+  mcp: {
+    servers: McpServerConfig[];
+  };
+  automation: AutomationConfig;
   claudeCode: ClaudeCodeConfig;
   dailyLetter: DailyLetterConfig;
   chatter: ChatterConfig;

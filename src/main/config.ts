@@ -31,7 +31,25 @@ const defaults: AppConfig = {
     shellAllowList: ['git', 'npm', 'node', 'python', 'pip', 'echo', 'ls', 'dir', 'pwd', 'cat', 'type'],
     screenCaptureRequireConfirm: true,
     playwrightEnabled: false,
-    memoryRWEnabled: false
+    memoryRWEnabled: false,
+    mcpEnabled: false,
+    maaEnabled: false,
+    cliAnythingEnabled: false,
+    desktopAutomationEnabled: false,
+    screenObservationEnabled: false
+  },
+  mcp: {
+    servers: []
+  },
+  automation: {
+    playwrightMcpCommand: '',
+    playwrightMcpArgs: [],
+    playwrightMcpCwd: '',
+    maaCommand: '',
+    maaWorkingDir: '',
+    cliAnythingCommand: '',
+    cliAnythingWorkingDir: '',
+    desktopAutomationProvider: 'none'
   },
   claudeCode: {
     hookServerEnabled: false,

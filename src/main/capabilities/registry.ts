@@ -1,9 +1,21 @@
 import type { CapabilityDescriptor, CapabilityStatus, ToolDefinition } from '../../shared/types';
 import { fileRead, fileWrite, fileList, fileStat } from './files';
 import { shellExec } from './shell';
-import { screenCapture } from './screen';
+import { listScreenSources, observeScreenSequence, screenCapture, stopScreenObservation } from './screen';
 import { browserGoto, isPlaywrightInstalled } from './browser';
-import { listProcesses, isMemoryRWInstalled } from './memory-rw';
+import { callBrowserMcpTool, listBrowserMcpTools, stopBrowserMcp } from './playwright-mcp';
+import { listProcesses, isMemoryRWInstalled, readMemory, scanMemory, stopMemoryScan, writeMemory } from './memory-rw';
+import { callMcpTool, getMcpStatus, listMcpServers, listMcpTools, stopMcpServers } from './mcp';
+import { getMaaStatus, runMaaTask, stopMaa } from './maa';
+import { getCliAnythingStatus, runCliAnything, stopCliAnything } from './cli-anything';
+import {
+  desktopClick,
+  desktopHotkey,
+  desktopMoveMouse,
+  desktopTypeText,
+  getDesktopAutomationStatus,
+  stopDesktopAutomation
+} from './desktop-automation';
 import { spawn } from 'child_process';
 import { getConfig } from '../config';
 import {
@@ -240,9 +252,55 @@ const adapters: CapabilityAdapter[] = [
             note: '已生成截图. dataUrl 已交给应用处理, 文本模型不获取像素数据 (多模态模型才会注入).'
           };
         }
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'screen_list_sources',
+            description: '列出可截取的屏幕源.',
+            parameters: { type: 'object', properties: {} }
+          }
+        },
+        invoke: async () => ({ ok: true, sources: await listScreenSources() })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'observe_screen_sequence',
+            description: '连续截取有限帧屏幕画面. 安全模式下需要额外启用并弹窗确认.',
+            parameters: {
+              type: 'object',
+              properties: {
+                requesting_context: { type: 'string' },
+                frames: { type: 'number', description: '默认 3, 最大 10' },
+                interval_ms: { type: 'number', description: '默认 1000, 最小 300' },
+                source_id: { type: 'string' }
+              }
+            }
+          }
+        },
+        invoke: async (args) => {
+          const r = await observeScreenSequence({
+            requestingContext: args.requesting_context,
+            frames: args.frames,
+            intervalMs: args.interval_ms,
+            sourceId: args.source_id
+          });
+          return {
+            ok: r.ok,
+            frameCount: r.frames.length,
+            frames: r.frames.map((f) => ({ ts: f.ts, width: f.width, height: f.height }))
+          };
+        }
       }
     ],
-    directActions: [{ name: 'screen.capture', invoke: ([opts]) => screenCapture(opts) }]
+    directActions: [
+      { name: 'screen.capture', invoke: ([opts]) => screenCapture(opts) },
+      { name: 'screen.listSources', invoke: () => listScreenSources() }
+    ],
+    stop: () => stopScreenObservation()
   },
   {
     descriptor: {
@@ -261,7 +319,7 @@ const adapters: CapabilityAdapter[] = [
           type: 'function',
           function: {
             name: 'browser_goto',
-            description: '用 Playwright 访问 URL 并返回标题+正文文本 (前 8000 字). 仅限危险模式 + 已启用.',
+            description: '通过 Playwright MCP 访问 URL 并返回标题+正文文本 (前 8000 字). 仅限危险模式 + 已启用.',
             parameters: {
               type: 'object',
               properties: { url: { type: 'string' } },
@@ -273,15 +331,45 @@ const adapters: CapabilityAdapter[] = [
           const r = await browserGoto(args.url);
           return { ok: r.ok, url: r.url, title: r.title, text: truncate(r.text, 8000) };
         }
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_mcp_list_tools',
+            description: '列出 Playwright MCP 暴露的浏览器工具. 仅限危险模式 + 已启用.',
+            parameters: { type: 'object', properties: {} }
+          }
+        },
+        invoke: async () => ({ ok: true, tools: await listBrowserMcpTools() })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'browser_mcp_call_tool',
+            description: '调用 Playwright MCP 的指定工具. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                tool_name: { type: 'string' },
+                args: { type: 'object' }
+              },
+              required: ['tool_name']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, result: await callBrowserMcpTool(args.tool_name, args.args ?? {}) })
       }
     ],
     getStatus: async () => {
-      const installed = await isPlaywrightInstalled();
-      return installed
-        ? { id: 'browser', status: 'available', message: '已安装' }
-        : { id: 'browser', status: 'not_installed', message: '未安装 (运行时调用会报错)' };
+      const configured = await isPlaywrightInstalled();
+      return configured
+        ? { id: 'browser', status: 'available', message: '已配置 Playwright MCP 命令' }
+        : { id: 'browser', status: 'disabled', message: '未配置 Playwright MCP 命令' };
     },
-    directActions: [{ name: 'browser.goto', invoke: ([url]) => browserGoto(url) }]
+    directActions: [{ name: 'browser.goto', invoke: ([url]) => browserGoto(url) }],
+    stop: () => stopBrowserMcp()
   },
   {
     descriptor: {
@@ -305,6 +393,67 @@ const adapters: CapabilityAdapter[] = [
           }
         },
         invoke: async () => ({ ok: true, processes: (await listProcesses()).slice(0, 200) })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'memory_read',
+            description: '读取目标进程内存. 仅限危险模式 + 已启用 memory_rw.',
+            parameters: {
+              type: 'object',
+              properties: {
+                pid: { type: 'number' },
+                address: { oneOf: [{ type: 'number' }, { type: 'string' }] },
+                type: { type: 'string' },
+                length: { type: 'number' }
+              },
+              required: ['pid', 'address', 'type']
+            }
+          }
+        },
+        invoke: (args) => readMemory(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'memory_write',
+            description: '写入目标进程内存. 可能导致崩溃; 必须传确认短语. 仅限危险模式 + 已启用 memory_rw.',
+            parameters: {
+              type: 'object',
+              properties: {
+                pid: { type: 'number' },
+                address: { oneOf: [{ type: 'number' }, { type: 'string' }] },
+                type: { type: 'string' },
+                value: {},
+                confirmPhrase: { type: 'string' }
+              },
+              required: ['pid', 'address', 'type', 'value', 'confirmPhrase']
+            }
+          }
+        },
+        invoke: (args) => writeMemory(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'memory_scan',
+            description: '有限扫描目标进程内存 pattern. 仅限危险模式 + 已启用 memory_rw.',
+            parameters: {
+              type: 'object',
+              properties: {
+                pid: { type: 'number' },
+                pattern: { type: 'string' },
+                type: { type: 'string' },
+                maxResults: { type: 'number' }
+              },
+              required: ['pid', 'pattern']
+            }
+          }
+        },
+        invoke: (args) => scanMemory(args)
       }
     ],
     getStatus: async () => {
@@ -313,7 +462,204 @@ const adapters: CapabilityAdapter[] = [
         ? { id: 'memory_rw', status: 'available', message: '已安装' }
         : { id: 'memory_rw', status: 'not_installed', message: '未安装' };
     },
-    directActions: [{ name: 'memory.listProcesses', invoke: () => listProcesses() }]
+    directActions: [{ name: 'memory.listProcesses', invoke: () => listProcesses() }],
+    stop: () => stopMemoryScan()
+  },
+  {
+    descriptor: {
+      id: 'mcp',
+      display_name: 'MCP 插件',
+      description: '通过本地 stdio MCP server 暴露长期插件能力',
+      risk_level: 'critical',
+      available_in_safe: false,
+      available_in_danger: true,
+      requires_extra_enable: true,
+      enable_flag: 'mcpEnabled'
+    },
+    tools: [
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_list_servers',
+            description: '列出配置的 MCP server. 仅限危险模式 + 已启用 MCP.',
+            parameters: { type: 'object', properties: {} }
+          }
+        },
+        invoke: () => ({ ok: true, servers: listMcpServers() })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_list_tools',
+            description: '列出指定 MCP server 的工具.',
+            parameters: {
+              type: 'object',
+              properties: { server_id: { type: 'string' } },
+              required: ['server_id']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, tools: await listMcpTools(args.server_id) })
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'mcp_call_tool',
+            description: '调用指定 MCP server 的工具.',
+            parameters: {
+              type: 'object',
+              properties: {
+                server_id: { type: 'string' },
+                tool_name: { type: 'string' },
+                args: { type: 'object' }
+              },
+              required: ['server_id', 'tool_name']
+            }
+          }
+        },
+        invoke: async (args) => ({ ok: true, result: await callMcpTool(args.server_id, args.tool_name, args.args ?? {}) })
+      }
+    ],
+    getStatus: getMcpStatus,
+    stop: () => stopMcpServers()
+  },
+  {
+    descriptor: {
+      id: 'maa',
+      display_name: 'MAA / MaaFramework',
+      description: '通过配置的本地命令运行游戏自动化任务',
+      risk_level: 'critical',
+      available_in_safe: false,
+      available_in_danger: true,
+      requires_extra_enable: true,
+      enable_flag: 'maaEnabled'
+    },
+    tools: [
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'maa_run_task',
+            description: '运行 MAA / MaaFramework 任务. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: {
+                task: { type: 'string' },
+                profile: { type: 'string' },
+                extraArgs: { type: 'array', items: { type: 'string' } },
+                timeoutMs: { type: 'number' }
+              },
+              required: ['task']
+            }
+          }
+        },
+        invoke: (args) => runMaaTask(args)
+      }
+    ],
+    getStatus: getMaaStatus,
+    stop: () => stopMaa()
+  },
+  {
+    descriptor: {
+      id: 'cli_anything',
+      display_name: 'CLI-Anything',
+      description: '把结构化 JSON 输入交给配置的外部 CLI 工具',
+      risk_level: 'high',
+      available_in_safe: false,
+      available_in_danger: true,
+      requires_extra_enable: true,
+      enable_flag: 'cliAnythingEnabled'
+    },
+    tools: [
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'cli_anything_run',
+            description: '运行配置好的 CLI-Anything 命令, stdin 传 JSON, stdout 读 JSON.',
+            parameters: {
+              type: 'object',
+              properties: {
+                input: { type: 'object' },
+                schema: { type: 'object' },
+                timeoutMs: { type: 'number' }
+              },
+              required: ['input']
+            }
+          }
+        },
+        invoke: (args) => runCliAnything(args)
+      }
+    ],
+    getStatus: getCliAnythingStatus,
+    stop: () => stopCliAnything()
+  },
+  {
+    descriptor: {
+      id: 'desktop_automation',
+      display_name: '桌面自动化',
+      description: '鼠标、键盘和热键桌面自动化接口',
+      risk_level: 'critical',
+      available_in_safe: false,
+      available_in_danger: true,
+      requires_extra_enable: true,
+      enable_flag: 'desktopAutomationEnabled'
+    },
+    tools: [
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'desktop_move_mouse',
+            description: '移动鼠标到指定坐标. 仅限危险模式 + 已启用.',
+            parameters: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, required: ['x', 'y'] }
+          }
+        },
+        invoke: (args) => desktopMoveMouse(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'desktop_click',
+            description: '点击指定坐标. 仅限危险模式 + 已启用.',
+            parameters: {
+              type: 'object',
+              properties: { x: { type: 'number' }, y: { type: 'number' }, button: { type: 'string' } },
+              required: ['x', 'y']
+            }
+          }
+        },
+        invoke: (args) => desktopClick(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'desktop_type_text',
+            description: '输入短文本. 仅限危险模式 + 已启用.',
+            parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
+          }
+        },
+        invoke: (args) => desktopTypeText(args)
+      },
+      {
+        definition: {
+          type: 'function',
+          function: {
+            name: 'desktop_hotkey',
+            description: '发送白名单热键. 仅限危险模式 + 已启用.',
+            parameters: { type: 'object', properties: { hotkey: { type: 'string' } }, required: ['hotkey'] }
+          }
+        },
+        invoke: (args) => desktopHotkey(args)
+      }
+    ],
+    getStatus: getDesktopAutomationStatus,
+    stop: () => stopDesktopAutomation()
   },
   {
     descriptor: {

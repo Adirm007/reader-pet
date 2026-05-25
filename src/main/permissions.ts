@@ -92,6 +92,59 @@ export function checkMemoryRW(): PermissionDecision {
   return { ok: true };
 }
 
+export function checkMcp(): PermissionDecision {
+  const cfg = getConfig();
+  if (cfg.safetyMode === 'safe') {
+    return { ok: false, reason: 'MCP 插件仅在危险模式下可用.' };
+  }
+  if (!cfg.capabilities.mcpEnabled) {
+    return { ok: false, reason: '危险模式下也需在设置中单独启用 MCP 插件.' };
+  }
+  return { ok: true };
+}
+
+export function checkMaa(): PermissionDecision {
+  const cfg = getConfig();
+  if (cfg.safetyMode === 'safe') {
+    return { ok: false, reason: 'MAA / MaaFramework 自动化仅在危险模式下可用.' };
+  }
+  if (!cfg.capabilities.maaEnabled) {
+    return { ok: false, reason: '危险模式下也需在设置中单独启用 MAA / MaaFramework.' };
+  }
+  return { ok: true };
+}
+
+export function checkCliAnything(): PermissionDecision {
+  const cfg = getConfig();
+  if (cfg.safetyMode === 'safe') {
+    return { ok: false, reason: 'CLI-Anything 外部工具仅在危险模式下可用.' };
+  }
+  if (!cfg.capabilities.cliAnythingEnabled) {
+    return { ok: false, reason: '危险模式下也需在设置中单独启用 CLI-Anything.' };
+  }
+  return { ok: true };
+}
+
+export function checkDesktopAutomation(): PermissionDecision {
+  const cfg = getConfig();
+  if (cfg.safetyMode === 'safe') {
+    return { ok: false, reason: '桌面自动化仅在危险模式下可用.' };
+  }
+  if (!cfg.capabilities.desktopAutomationEnabled) {
+    return { ok: false, reason: '危险模式下也需在设置中单独启用桌面自动化.' };
+  }
+  return { ok: true };
+}
+
+export function checkScreenObservation(): PermissionDecision {
+  const cfg = getConfig();
+  if (cfg.safetyMode === 'danger') return { ok: true };
+  if (!cfg.capabilities.screenObservationEnabled) {
+    return { ok: false, reason: '安全模式下需在设置中单独启用连续屏幕观察.' };
+  }
+  return { ok: true };
+}
+
 export function isMode(mode: SafetyMode): boolean {
   return getConfig().safetyMode === mode;
 }

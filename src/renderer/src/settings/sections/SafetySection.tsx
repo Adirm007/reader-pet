@@ -15,6 +15,7 @@ export default function SafetySection({
   const [phase, setPhase] = useState<'reading' | 'first-confirm' | 'second-confirm'>('reading');
   const [caps, setCaps] = useState<CapabilityDescriptor[]>([]);
   const [statuses, setStatuses] = useState<Record<string, CapabilityStatus>>({});
+  const [stopResult, setStopResult] = useState<string>('');
   const timerRef = useRef<number | null>(null);
 
   const refreshExtras = async () => {
@@ -82,6 +83,31 @@ export default function SafetySection({
     refreshExtras();
   };
 
+  const emergencyStop = async () => {
+    const r = await window.api.emergencyStop();
+    setStopResult(
+      r.ok
+        ? `已停止: ${r.stopped.length ? r.stopped.join(', ') : '无运行中能力'}`
+        : `部分失败: ${r.errors.map((e) => `${e.id}: ${e.error}`).join(' | ')}`
+    );
+    refreshExtras();
+  };
+
+  const dangerToggle = (key: keyof AppConfig['capabilities'], label: string, status?: CapabilityStatus) => (
+    <label className="checkbox-row">
+      <input
+        type="checkbox"
+        disabled={!isDanger}
+        checked={Boolean(cfg.capabilities[key])}
+        onChange={(e) => toggleCap(key, e.target.checked)}
+      />
+      {label}{' '}
+      <span className="muted" style={{ fontSize: 12 }}>
+        · {status?.message ?? '状态未知'}
+      </span>
+    </label>
+  );
+
   const isDanger = cfg.safetyMode === 'danger';
 
   return (
@@ -105,6 +131,17 @@ export default function SafetySection({
             <button className="danger" onClick={startSwitchToDanger}>切到危险模式…</button>
           )}
         </div>
+      </div>
+
+      <div className="mode-row" style={{ marginTop: 16 }}>
+        <div>
+          <div className="mode-label">紧急停止</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            中断 MCP、屏幕观察、内存扫描、MAA、CLI-Anything、桌面自动化等实现了 stop hook 的能力.
+          </div>
+          {stopResult && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{stopResult}</div>}
+        </div>
+        <button className="danger" onClick={emergencyStop}>紧急停止所有能力</button>
       </div>
 
       <h3 style={{ marginTop: 24 }}>能力清单</h3>
@@ -136,30 +173,23 @@ export default function SafetySection({
 
       <h3 style={{ marginTop: 24 }}>危险模式专属开关</h3>
       <div className="muted" style={{ marginBottom: 8 }}>
-        必须先切到危险模式; 这两项还需要原生模块, 没装时只能开关关掉再装.
+        必须先切到危险模式; 这些能力即使在危险模式下也要单独勾选.
       </div>
+      {dangerToggle('playwrightEnabled', '启用浏览器自动化 (Playwright MCP)', statuses.browser)}
+      {dangerToggle('memoryRWEnabled', '启用游戏内存读写 (memoryjs · 仅 Windows)', statuses.memory_rw)}
+      {dangerToggle('mcpEnabled', '启用 MCP 插件', statuses.mcp)}
+      {dangerToggle('maaEnabled', '启用 MAA / MaaFramework', statuses.maa)}
+      {dangerToggle('cliAnythingEnabled', '启用 CLI-Anything', statuses.cli_anything)}
+      {dangerToggle('desktopAutomationEnabled', '启用桌面自动化', statuses.desktop_automation)}
       <label className="checkbox-row">
         <input
           type="checkbox"
-          disabled={!isDanger}
-          checked={cfg.capabilities.playwrightEnabled}
-          onChange={(e) => toggleCap('playwrightEnabled', e.target.checked)}
+          checked={cfg.capabilities.screenObservationEnabled}
+          onChange={(e) => toggleCap('screenObservationEnabled', e.target.checked)}
         />
-        启用浏览器自动化 (Playwright){' '}
+        启用连续屏幕观察 (安全模式仍会弹窗确认){' '}
         <span className="muted" style={{ fontSize: 12 }}>
-          · {statuses.browser?.message ?? '状态未知'}
-        </span>
-      </label>
-      <label className="checkbox-row">
-        <input
-          type="checkbox"
-          disabled={!isDanger}
-          checked={cfg.capabilities.memoryRWEnabled}
-          onChange={(e) => toggleCap('memoryRWEnabled', e.target.checked)}
-        />
-        启用游戏内存读写 (memoryjs · 仅 Windows){' '}
-        <span className="muted" style={{ fontSize: 12 }}>
-          · {statuses.memory_rw?.message ?? '状态未知'}
+          · {statuses.screen_capture?.message ?? '状态未知'}
         </span>
       </label>
 

@@ -112,12 +112,18 @@ Reader Pet 可以和 Claude Code 协作：
 - 路径 stat
 - Shell / PowerShell 命令执行
 - 屏幕截图
-- 浏览器访问 / 自动化 stub
-- 进程列表 / 内存读写 stub
+- 屏幕源列表 / 有限帧屏幕观察
+- 浏览器访问 / 自动化：优先通过 Playwright MCP
+- 进程列表 / 基础内存读写 / 有限扫描
+- MCP stdio server 工具调用
+- MAA / MaaFramework CLI Adapter scaffold
+- CLI-Anything 风格结构化外部工具 Adapter scaffold
+- 桌面自动化 Adapter scaffold
 - Claude Code 任务派发
 - 对话记忆检索 / 写入 / 撤回
+- emergency stop UI 与 Adapter stop hook
 
-后续计划把浏览器自动化替换为 Playwright MCP，并继续追加 MCP、MAA/MaaFramework、CLI-Anything、桌面自动化、屏幕/视频观察、通用进程内存读写等 Adapter。
+浏览器自动化、MCP、MAA/MaaFramework、CLI-Anything、桌面自动化、进程内存读写等高风险能力默认关闭，需要危险模式 + 对应独立开关。当前 MAA / CLI-Anything / 桌面自动化仍是可配置 Adapter scaffold：能进入能力清单、状态检测、按固定命令调用或明确失败，但不自动安装外部依赖。
 
 ### 安全模式与危险模式
 
@@ -128,14 +134,16 @@ Reader Pet 可以和 Claude Code 协作：
 - 文件读写限制在白名单目录
 - Shell 命令限制在白名单首词
 - 截屏默认需要弹窗确认
-- 浏览器自动化不可用
+- 浏览器自动化、MCP、MAA、CLI-Anything、桌面自动化不可用
 - 进程内存读写不可用
+- 连续屏幕观察默认不可用，除非单独开启且弹窗确认
 
 危险模式下：
 
 - 可读写任意当前用户可访问路径
 - 可执行任意 shell / PowerShell 命令
-- 浏览器自动化仍需单独勾选启用
+- 浏览器自动化仍需单独勾选启用，并配置 Playwright MCP 命令
+- MCP、MAA、CLI-Anything、桌面自动化仍需单独勾选启用
 - 进程内存读写仍需单独勾选启用
 - 切换危险模式需要 10 秒阅读倒计时 + 二次确认
 
@@ -261,8 +269,11 @@ resources/                 打包资源、精灵图、立绘等
 
 部分能力需要额外环境：
 
-- Playwright：当前浏览器能力会在未安装时提示错误；后续计划改为 Playwright MCP。
+- Playwright MCP：浏览器能力通过用户配置的本地 MCP 命令调用；不自动安装。
 - `memoryjs`：进程内存读写相关，偏 Windows，可能触发杀软警报。
+- MAA / MaaFramework：游戏自动化可选，需要用户自行配置本地命令。
+- CLI-Anything：结构化外部工具可选，需要用户自行配置本地命令。
+- 桌面自动化 provider：当前只接入 Adapter scaffold，具体驱动需后续安装/实现。
 - Neo4j：图记忆可选，不配置则不启用。
 - GPT-SoVITS：TTS 可选，需要用户自行启动服务。
 - Claude Code：工程任务派发与 Stop hook 需要本机安装 Claude Code CLI。
@@ -271,14 +282,14 @@ resources/                 打包资源、精灵图、立绘等
 
 短期路线：
 
-- 用 Playwright MCP 替换现有浏览器 stub
-- 继续深化屏幕观察能力，未来考虑视频观察
-- 补全通用进程内存读写
-- 接入 MAA / MaaFramework 做游戏操作自动化
-- 评估 CLI-Anything 作为结构化外部工具 Adapter
-- 接入 MCP 作为长期插件标准
-- 增加桌面自动化能力
-- 完善 emergency stop UI 与各 Adapter 的 stop hook
+- Playwright MCP 浏览器能力：已接入配置式 MCP 调用；后续补设置页命令编辑与更多高级工具封装
+- 屏幕观察能力：已支持屏幕源列表和有限帧观察；后续再评估视频观察
+- 通用进程内存读写：已接入基础 read/write/scan；后续按真实 memoryjs 环境继续打磨
+- MAA / MaaFramework：已接入 CLI Adapter scaffold；后续补真实任务配置 UI 与脚本资产管理
+- CLI-Anything：已接入结构化外部 CLI Adapter scaffold；后续验证真实工具协议是否稳定
+- MCP 长期插件标准：已接入 stdio MCP server / tool 调用地基；后续补插件配置 UI 与低风险 allowlist
+- 桌面自动化：已接入 Adapter scaffold；后续选择具体 provider 并实现动作队列
+- emergency stop：已接入设置页按钮与 Adapter stop hook；后续补全所有长任务的运行态可视化
 
 ## 许可证
 
