@@ -282,4 +282,4 @@ resources/                 打包资源、精灵图、立绘等
 
 ## 许可证
 
-MIT
+CC BY-NC
