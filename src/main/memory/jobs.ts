@@ -2,7 +2,8 @@ import { getConfig } from '../config';
 import {
   claimNextMemoryJob,
   enqueueMemoryJob,
-  updateMemoryJob
+  failOrRetryMemoryJob,
+  recoverStaleMemoryJobs
 } from './store';
 import { processMemoryJob } from './digestion';
 
@@ -24,7 +25,8 @@ export function enqueueDigestEpisodePair(input: {
 
 export function startMemoryWorker() {
   stopped = false;
-  if (getConfig().memory.digestionEnabled) kickMemoryWorker();
+  recoverStaleMemoryJobs();
+  if (getConfig().memory.digestionEnabled || getConfig().memory.embeddingEnabled) kickMemoryWorker();
 }
 
 export function stopMemoryWorker() {
@@ -47,16 +49,14 @@ async function runWorkerLoop() {
   running = true;
   try {
     while (!stopped) {
-      const job = claimNextMemoryJob(['digest_episode_pair', 'graph_sync_summary']);
+      const job = claimNextMemoryJob(['digest_episode_pair', 'graph_sync_summary', 'embed_memory_item', 'embed_missing_memories']);
       if (!job) break;
       try {
         await processMemoryJob(job);
       } catch (e: any) {
-        updateMemoryJob(job.id, {
-          status: 'failed',
-          finished_at: Date.now(),
-          error: e?.message ?? String(e)
-        });
+        const message = e?.message ?? String(e);
+        const retryable = !/not found|不存在|unsupported|不支持|payload|JSON/i.test(message);
+        failOrRetryMemoryJob(job, message, retryable);
       }
     }
   } finally {

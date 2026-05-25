@@ -13,7 +13,7 @@ import {
 } from './capabilities';
 import { invokeDirectAction } from './capabilities/registry';
 import { listBrowserMcpTools } from './capabilities/playwright-mcp';
-import { listMcpTools } from './capabilities/mcp';
+import { getMcpPrompt, listMcpPrompts, listMcpResources, listMcpTools, readMcpResource } from './capabilities/mcp';
 import {
   installStopHook,
   uninstallStopHook,
@@ -26,6 +26,7 @@ import {
   triggerChatterNow
 } from './proactive';
 import { synthesize, pingTTS } from './tts';
+import { embed as providerEmbed } from './providers';
 import { listSpritePackages, loadSpritePackage, getUserSpriteDir } from './pet-sprites';
 import { shell } from 'electron';
 import {
@@ -42,7 +43,8 @@ import {
   listMemorySources,
   promoteTaskToMemory,
   retryMemoryJob,
-  updateTaskMemoryState
+  updateTaskMemoryState,
+  enqueueMemoryJob
 } from './memory/store';
 import { testGraphConnection, getGraphStats } from './memory/neo4j-client';
 import { kickMemoryWorker } from './memory/jobs';
@@ -94,6 +96,14 @@ export function registerIpc(
   // Provider
   ipcMain.handle('provider:test', (_, id: string) => testProvider(id));
   ipcMain.handle('provider:listModels', async (_, cfg: ProviderConfig) => listModels(cfg));
+  ipcMain.handle('provider:testEmbedding', async (_, cfg: ProviderConfig) => {
+    try {
+      const resp = await providerEmbed(cfg, { texts: ['reader-pet embedding test'], model: cfg.embeddingModel || cfg.model });
+      return { ok: true, message: `OK · ${resp.model} · ${resp.dimensions} dimensions` };
+    } catch (e: any) {
+      return { ok: false, message: e?.message ?? String(e) };
+    }
+  });
 
   // 设置窗口
   ipcMain.handle('settings:open', () => openSettingsWindow());
@@ -108,6 +118,10 @@ export function registerIpc(
   ipcMain.handle('capabilities:emergencyStop', () => emergencyStop());
   ipcMain.handle('capabilities:listBrowserMcpTools', () => listBrowserMcpTools());
   ipcMain.handle('capabilities:listMcpTools', (_, serverId: string) => listMcpTools(serverId));
+  ipcMain.handle('capabilities:listMcpResources', (_, serverId: string) => listMcpResources(serverId));
+  ipcMain.handle('capabilities:readMcpResource', (_, serverId: string, uri: string) => readMcpResource(serverId, uri));
+  ipcMain.handle('capabilities:listMcpPrompts', (_, serverId: string) => listMcpPrompts(serverId));
+  ipcMain.handle('capabilities:getMcpPrompt', (_, serverId: string, name: string, args: Record<string, unknown>) => getMcpPrompt(serverId, name, args));
   ipcMain.handle('capabilities:isPlaywrightInstalled', async () => {
     const status = await getCapabilityStatus('browser');
     return status?.status !== 'not_installed';
@@ -125,6 +139,9 @@ export function registerIpc(
   ipcMain.handle('cap:shell', (_, cmd: string, opts: any) => invokeDirectAction('shell.exec', [cmd, opts]));
   ipcMain.handle('cap:screen', (_, opts: any) => invokeDirectAction('screen.capture', [opts]));
   ipcMain.handle('cap:browserGoto', (_, url: string) => invokeDirectAction('browser.goto', [url]));
+  ipcMain.handle('cap:maaRunTask', (_, args: any) => invokeDirectAction('maa.runTask', [args]));
+  ipcMain.handle('cap:desktopRunQueue', (_, args: any) => invokeDirectAction('desktop.runQueue', [args]));
+  ipcMain.handle('cap:cliAnythingRun', (_, args: any) => invokeDirectAction('cliAnything.run', [args]));
   ipcMain.handle('cap:listProcesses', () => invokeDirectAction('memory.listProcesses', []));
 
   // Claude Code 桥接
@@ -184,6 +201,15 @@ export function registerIpc(
     return { ok: true };
   });
   ipcMain.handle('mem:kickDigestion', () => {
+    kickMemoryWorker();
+    return { ok: true };
+  });
+  ipcMain.handle('mem:backfillEmbeddings', () => {
+    enqueueMemoryJob({
+      type: 'embed_missing_memories',
+      dedupe_key: `embed_missing_memories:${Date.now()}`,
+      payload_json: '{}'
+    });
     kickMemoryWorker();
     return { ok: true };
   });

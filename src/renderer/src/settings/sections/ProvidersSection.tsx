@@ -20,6 +20,12 @@ const MODEL_PLACEHOLDER: Record<ProviderType, string> = {
   gemini: '例如: gemini-2.0-flash / gemini-2.5-pro'
 };
 
+const EMBEDDING_PLACEHOLDER: Record<ProviderType, string> = {
+  'openai-compatible': '例如: text-embedding-3-small / bge-m3',
+  anthropic: 'Anthropic 暂不支持 embedding，建议另配 OpenAI-compatible',
+  gemini: '例如: text-embedding-004'
+};
+
 export default function ProvidersSection({
   cfg,
   onChange
@@ -91,6 +97,13 @@ export default function ProvidersSection({
     await window.api.setConfig({ providers: next });
     setTestMsg('测试中…');
     const r = await window.api.testProvider(editing.id);
+    setTestMsg((r.ok ? '✓ ' : '✗ ') + r.message);
+  };
+
+  const testEmbedding = async () => {
+    if (!editing) return;
+    setTestMsg('测试 embedding 中…');
+    const r = await window.api.testProviderEmbedding(editing);
     setTestMsg((r.ok ? '✓ ' : '✗ ') + r.message);
   };
 
@@ -195,9 +208,18 @@ export default function ProvidersSection({
               placeholder={MODEL_PLACEHOLDER[editing.type]}
             />
           </label>
+          <label>
+            Embedding 模型名 (可选)
+            <input
+              value={editing.embeddingModel ?? ''}
+              onChange={(e) => setEditing({ ...editing, embeddingModel: e.target.value })}
+              placeholder={EMBEDDING_PLACEHOLDER[editing.type]}
+            />
+          </label>
           <div className="form-actions">
             <button onClick={save} className="primary">保存</button>
             <button onClick={test}>测试连接</button>
+            <button onClick={testEmbedding}>测试 Embedding</button>
             <button onClick={fetchModels}>获取模型列表</button>
             <button className="ghost" onClick={() => { setEditing(null); setTestMsg(''); }}>取消</button>
           </div>

@@ -8,7 +8,9 @@ import type {
   ChatResponse,
   ToolDefinition,
   ChatMessage,
-  ToolCall
+  ToolCall,
+  EmbeddingRequest,
+  EmbeddingResponse
 } from '../../shared/types';
 
 function trimSlash(s: string): string {
@@ -145,6 +147,37 @@ export async function chatGemini(
       cachedInputTokens: data.usageMetadata?.cachedContentTokenCount
     }
   };
+}
+
+export async function embedGemini(
+  cfg: ProviderConfig,
+  req: EmbeddingRequest
+): Promise<EmbeddingResponse> {
+  const base = trimSlash(cfg.baseUrl || 'https://generativelanguage.googleapis.com');
+  const model = req.model?.trim() || cfg.embeddingModel?.trim() || 'text-embedding-004';
+  const vectors: Array<{ textIndex: number; vector: number[] }> = [];
+  for (let i = 0; i < req.texts.length; i++) {
+    const text = String(req.texts[i] ?? '').slice(0, 6000);
+    if (!text.trim()) throw new Error('embedding input 不能为空');
+    const url = `${base}/v1beta/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(cfg.apiKey)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cfg.extraHeaders ?? {})
+      },
+      body: JSON.stringify({ content: { parts: [{ text }] } })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Provider ${cfg.name} embeddings HTTP ${res.status}: ${body.slice(0, 500)}`);
+    }
+    const data: any = await res.json();
+    const values = data.embedding?.values;
+    if (!Array.isArray(values)) throw new Error('Gemini embedding 响应缺少 embedding.values');
+    vectors.push({ textIndex: i, vector: values.map(Number).filter(Number.isFinite) });
+  }
+  return { model, dimensions: vectors[0]?.vector.length ?? 0, vectors };
 }
 
 export async function listModelsGemini(cfg: ProviderConfig): Promise<string[] | null> {

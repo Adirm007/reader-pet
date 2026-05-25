@@ -1,6 +1,7 @@
 import { getActiveProvider } from '../config';
 import { chat as providerChat } from '../providers';
-import type { EpisodeRow } from '../../shared/types';
+import { inferFactCardinality } from './store';
+import type { EpisodeRow, FactCardinality } from '../../shared/types';
 
 export interface MemoryExtraction {
   importance: number;
@@ -17,6 +18,7 @@ export interface MemoryExtraction {
     subject: string;
     object: string;
     confidence: number;
+    cardinality?: FactCardinality;
   }>;
   entities: Array<{
     name: string;
@@ -84,7 +86,10 @@ function normalizeExtraction(raw: any): MemoryExtraction {
         predicate: String(f?.predicate ?? '').trim().toLowerCase(),
         subject: String(f?.subject ?? 'user').trim() || 'user',
         object: String(f?.object ?? '').trim(),
-        confidence: clamp01(f?.confidence, 0.7)
+        confidence: clamp01(f?.confidence, 0.7),
+        cardinality: f?.cardinality === 'set' || f?.cardinality === 'single'
+          ? f.cardinality
+          : inferFactCardinality(String(f?.predicate ?? '').trim().toLowerCase())
       }))
       .filter((f) => /^[a-z0-9_.-]{1,64}$/.test(f.predicate) && f.object)
       .slice(0, 5),
@@ -147,7 +152,7 @@ export async function extractMemoryFromEpisodePair(input: {
       {
         role: 'system',
         content:
-          '你是 reader-pet 的长期记忆整理器。只输出严格 JSON, 不要 markdown。只抽取长期有用且能由原文支持的记忆: 用户偏好、伴侣连续性、项目决策、创作世界观、工具任务结果、边界和来源可追溯内容。不要记录玩笑、假设、短期寒暄, 不要编造。JSON schema: {"importance":0..1,"summary":{"should_create":boolean,"title":string,"kind":string,"summary":string,"keywords":string[],"entities":string[]},"facts":[{"predicate":"lower_snake_key","subject":"user","object":string,"confidence":0..1}],"entities":[{"name":string,"type":string,"aliases":string[]}],"relations":[{"subject":string,"subject_type":string,"predicate":string,"object":string,"object_type":string,"qualifier":string,"confidence":0..1,"importance":0..1}],"decisions":[{"title":string,"decision":string,"reason":string,"alternatives_rejected":string[],"confidence":0..1}]}'
+          '你是 reader-pet 的长期记忆整理器。只输出严格 JSON, 不要 markdown。只抽取长期有用且能由原文支持的记忆: 用户偏好、伴侣连续性、项目决策、创作世界观、工具任务结果、边界和来源可追溯内容。不要记录玩笑、假设、短期寒暄, 不要编造。事实 cardinality: single 表示同 predicate+subject 只能有一个当前值; set 表示可同时存在多个值, 用于 likes/dislikes/interests/boundaries/tools/ongoing_projects/writing_themes 等偏好、边界、兴趣、项目列表。JSON schema: {"importance":0..1,"summary":{"should_create":boolean,"title":string,"kind":string,"summary":string,"keywords":string[],"entities":string[]},"facts":[{"predicate":"lower_snake_key","subject":"user","object":string,"confidence":0..1,"cardinality":"single|set"}],"entities":[{"name":string,"type":string,"aliases":string[]}],"relations":[{"subject":string,"subject_type":string,"predicate":string,"object":string,"object_type":string,"qualifier":string,"confidence":0..1,"importance":0..1}],"decisions":[{"title":string,"decision":string,"reason":string,"alternatives_rejected":string[],"confidence":0..1}]}'
       },
       { role: 'user', content: source }
     ],

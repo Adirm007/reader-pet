@@ -46,6 +46,8 @@ const api = {
     ipcRenderer.invoke('provider:test', id),
   listProviderModels: (cfg: ProviderConfig): Promise<string[] | null> =>
     ipcRenderer.invoke('provider:listModels', cfg),
+  testProviderEmbedding: (cfg: ProviderConfig): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke('provider:testEmbedding', cfg),
 
   // 窗口
   hidePet: () => ipcRenderer.invoke('pet:hide'),
@@ -69,10 +71,24 @@ const api = {
     ipcRenderer.invoke('capabilities:listBrowserMcpTools'),
   listMcpTools: (serverId: string): Promise<any[]> =>
     ipcRenderer.invoke('capabilities:listMcpTools', serverId),
+  listMcpResources: (serverId: string): Promise<any[]> =>
+    ipcRenderer.invoke('capabilities:listMcpResources', serverId),
+  readMcpResource: (serverId: string, uri: string): Promise<unknown> =>
+    ipcRenderer.invoke('capabilities:readMcpResource', serverId, uri),
+  listMcpPrompts: (serverId: string): Promise<any[]> =>
+    ipcRenderer.invoke('capabilities:listMcpPrompts', serverId),
+  getMcpPrompt: (serverId: string, name: string, args?: Record<string, unknown>): Promise<unknown> =>
+    ipcRenderer.invoke('capabilities:getMcpPrompt', serverId, name, args ?? {}),
   isPlaywrightInstalled: (): Promise<boolean> =>
     ipcRenderer.invoke('capabilities:isPlaywrightInstalled'),
   isMemoryRWInstalled: (): Promise<boolean> =>
     ipcRenderer.invoke('capabilities:isMemoryRWInstalled'),
+  maaRunTask: (args: { task?: string; profile?: string; extraArgs?: string[]; timeoutMs?: number }): Promise<unknown> =>
+    ipcRenderer.invoke('cap:maaRunTask', args),
+  desktopRunQueue: (args: { actions: unknown[]; dryRun?: boolean; description?: string }): Promise<unknown> =>
+    ipcRenderer.invoke('cap:desktopRunQueue', args),
+  cliAnythingRun: (args: { input: Record<string, unknown>; schema?: unknown; timeoutMs?: number }): Promise<unknown> =>
+    ipcRenderer.invoke('cap:cliAnythingRun', args),
 
   // Claude Code
   ccInstallHook: (): Promise<{ ok: boolean; message: string }> =>
@@ -136,6 +152,7 @@ const api = {
     ipcRenderer.invoke('mem:listJobs', status, limit),
   memRetryJob: (id: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:retryJob', id),
   memKickDigestion: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:kickDigestion'),
+  memBackfillEmbeddings: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('mem:backfillEmbeddings'),
 
   // 主动行为
   triggerLetter: (): Promise<{ ok: boolean; text?: string; reason?: string }> =>

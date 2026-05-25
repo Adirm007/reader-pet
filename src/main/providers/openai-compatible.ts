@@ -1,6 +1,6 @@
 // OpenAI 兼容协议适配器
 // 覆盖: OpenAI 官方 / DeepSeek / Qwen / Moonshot / 智谱 / Ollama / LM Studio / 各反代
-import type { ProviderConfig, ChatRequest, ChatResponse, ChatMessage } from '../../shared/types';
+import type { ProviderConfig, ChatRequest, ChatResponse, ChatMessage, EmbeddingRequest, EmbeddingResponse } from '../../shared/types';
 
 function trimSlash(s: string): string {
   return s.replace(/\/+$/, '');
@@ -74,6 +74,44 @@ export async function chatOpenAICompatible(
       outputTokens: data.usage?.completion_tokens ?? 0,
       cachedInputTokens: data.usage?.prompt_tokens_details?.cached_tokens
     }
+  };
+}
+
+export async function embedOpenAICompatible(
+  cfg: ProviderConfig,
+  req: EmbeddingRequest
+): Promise<EmbeddingResponse> {
+  const model = req.model?.trim() || cfg.embeddingModel?.trim() || cfg.model;
+  const texts = req.texts.map((text) => String(text ?? '').slice(0, 6000));
+  if (!texts.length || texts.some((text) => !text.trim())) throw new Error('embedding input 不能为空');
+  const res = await fetch(`${trimSlash(cfg.baseUrl)}/embeddings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${cfg.apiKey}`,
+      ...(cfg.extraHeaders ?? {})
+    },
+    body: JSON.stringify({ model, input: texts })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Provider ${cfg.name} embeddings HTTP ${res.status}: ${text.slice(0, 500)}`);
+  }
+  const data: any = await res.json();
+  const rows = Array.isArray(data.data) ? data.data : [];
+  const vectors: Array<{ textIndex: number; vector: number[] }> = rows
+    .map((row: any, index: number) => ({
+      textIndex: Number.isFinite(row?.index) ? Number(row.index) : index,
+      vector: Array.isArray(row?.embedding) ? row.embedding.map(Number).filter(Number.isFinite) : []
+    }))
+    .filter((row: { textIndex: number; vector: number[] }) => row.vector.length > 0)
+    .sort((a: { textIndex: number }, b: { textIndex: number }) => a.textIndex - b.textIndex);
+  if (vectors.length !== texts.length) throw new Error('embedding 返回数量与输入数量不一致');
+  return {
+    model: data.model ?? model,
+    dimensions: vectors[0]?.vector.length ?? 0,
+    vectors,
+    usage: { inputTokens: data.usage?.prompt_tokens }
   };
 }
 

@@ -12,10 +12,13 @@ import { app } from 'electron';
 import { join } from 'path';
 import type {
   ConversationSummaryRow,
+  EmbeddableMemoryType,
   EpisodeRow,
+  FactCardinality,
   FactRow,
   FactStatus,
   GraphSyncStateRow,
+  MemoryEmbeddingRow,
   MemoryJobRow,
   MemoryJobStatus,
   MemorySourceRow,
@@ -150,8 +153,27 @@ function initSchema(db: Database.Database) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_sync_state_source
       ON graph_sync_state(source_type, source_id);
+
+    CREATE TABLE IF NOT EXISTS memory_embeddings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_type TEXT NOT NULL,
+      memory_id INTEGER NOT NULL,
+      provider_id TEXT,
+      model TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      vector BLOB NOT NULL,
+      text_hash TEXT NOT NULL,
+      source_text TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_embeddings_unique
+      ON memory_embeddings(memory_type, memory_id, model);
+    CREATE INDEX IF NOT EXISTS idx_memory_embeddings_lookup
+      ON memory_embeddings(memory_type, model);
   `);
 
+  ensureColumn(db, 'facts', 'cardinality', `TEXT NOT NULL DEFAULT 'single'`);
   ensureColumn(db, 'tasks', 'memory_status', `TEXT NOT NULL DEFAULT 'routine'`);
   ensureColumn(db, 'tasks', 'recall_policy', `TEXT NOT NULL DEFAULT 'manual_only'`);
   ensureColumn(db, 'tasks', 'promoted_summary_id', 'INTEGER');
@@ -159,6 +181,9 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'tasks', 'user_note', 'TEXT');
   ensureColumn(db, 'conversation_summaries', 'status', `TEXT NOT NULL DEFAULT 'active'`);
   ensureColumn(db, 'conversation_summaries', 'recall_policy', `TEXT NOT NULL DEFAULT 'on_topic'`);
+  ensureColumn(db, 'memory_jobs', 'next_run_at', 'INTEGER');
+  ensureColumn(db, 'memory_jobs', 'max_attempts', 'INTEGER NOT NULL DEFAULT 3');
+  ensureColumn(db, 'memory_jobs', 'last_heartbeat_at', 'INTEGER');
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
@@ -180,12 +205,33 @@ function clampLimit(limit: number | undefined, fallback: number, max: number): n
   return Math.max(1, Math.min(max, Math.floor(limit as number)));
 }
 
+const SET_FACT_PREDICATES = new Set([
+  'likes',
+  'dislikes',
+  'interests',
+  'boundaries',
+  'tools',
+  'ongoing_projects',
+  'writing_themes',
+  'favorite_works',
+  'favorite_characters',
+  'allergies',
+  'relationship_context'
+]);
+
+export function inferFactCardinality(predicate: string): FactCardinality {
+  const normalized = String(predicate ?? '').trim().toLowerCase();
+  if (SET_FACT_PREDICATES.has(normalized) || /(_list|_items|_tags)$/.test(normalized)) return 'set';
+  return 'single';
+}
+
 function normalizeFactInput(row: {
   predicate: string;
   subject?: string;
   object: string;
   confidence?: number;
   source_episode_id?: number;
+  cardinality?: FactCardinality;
 }) {
   const predicate = String(row.predicate ?? '').trim().toLowerCase();
   const subject = String(row.subject ?? 'user').trim() || 'user';
@@ -200,11 +246,13 @@ function normalizeFactInput(row: {
   const confidence = Number.isFinite(rawConfidence)
     ? Math.max(0, Math.min(1, Number(rawConfidence)))
     : 0.8;
+  const cardinality = row.cardinality === 'set' ? 'set' : row.cardinality === 'single' ? 'single' : inferFactCardinality(predicate);
   return {
     predicate,
     subject,
     object,
     confidence,
+    cardinality,
     source_episode_id: row.source_episode_id
   };
 }
@@ -307,28 +355,53 @@ export function upsertFact(row: {
   object: string;
   confidence?: number;
   source_episode_id?: number;
+  cardinality?: FactCardinality;
 }): { id: number; supersededId?: number } {
   const db = getDb();
   const normalized = normalizeFactInput(row);
   return db.transaction(() => {
+    if (normalized.cardinality === 'set') {
+      const existingSet = db
+        .prepare(
+          `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND object = ? AND status = 'active' AND cardinality = 'set' ORDER BY id DESC LIMIT 1`
+        )
+        .get(normalized.predicate, normalized.subject, normalized.object) as FactRow | undefined;
+      if (existingSet) {
+        db.prepare(`UPDATE facts SET confidence = MIN(1.0, confidence + 0.05) WHERE id = ?`).run(existingSet.id);
+        return { id: existingSet.id };
+      }
+      const r = db
+        .prepare(
+          `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, source_episode_id, cardinality)
+           VALUES (?, ?, ?, ?, 'active', ?, ?, 'set')`
+        )
+        .run(
+          normalized.predicate,
+          normalized.subject,
+          normalized.object,
+          normalized.confidence,
+          Date.now(),
+          normalized.source_episode_id ?? null
+        );
+      return { id: Number(r.lastInsertRowid) };
+    }
+
     const activeFacts = db
       .prepare(
-        `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND status = 'active' ORDER BY id DESC`
+        `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' ORDER BY id DESC`
       )
       .all(normalized.predicate, normalized.subject) as FactRow[];
     const existing = activeFacts[0];
 
     if (existing && existing.object === normalized.object) {
-      db.prepare(
-        `UPDATE facts SET confidence = MIN(1.0, confidence + 0.05) WHERE id = ?`
-      ).run(existing.id);
+      db.prepare(`UPDATE facts SET confidence = MIN(1.0, confidence + 0.05) WHERE id = ?`).run(existing.id);
       return { id: existing.id };
     }
 
     const r = db
       .prepare(
-        `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, source_episode_id)
-         VALUES (?, ?, ?, ?, 'active', ?, ?)`
+        `INSERT INTO facts (predicate, subject, object, confidence, status, created_at, source_episode_id, cardinality)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, 'single')`
       )
       .run(
         normalized.predicate,
@@ -342,7 +415,7 @@ export function upsertFact(row: {
 
     db.prepare(
       `UPDATE facts SET status = 'superseded', superseded_by = ?
-       WHERE predicate = ? AND subject = ? AND status = 'active' AND id <> ?`
+       WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND id <> ?`
     ).run(newId, normalized.predicate, normalized.subject, newId);
 
     return existing ? { id: newId, supersededId: existing.id } : { id: newId };
@@ -361,10 +434,12 @@ export function setFactStatus(id: number, status: FactStatus) {
   db.transaction(() => {
     const fact = db.prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as FactRow | undefined;
     if (!fact) return;
-    db.prepare(
-      `UPDATE facts SET status = 'superseded', superseded_by = ?
-       WHERE predicate = ? AND subject = ? AND status = 'active' AND id <> ?`
-    ).run(id, fact.predicate, fact.subject, id);
+    if ((fact.cardinality ?? 'single') === 'single') {
+      db.prepare(
+        `UPDATE facts SET status = 'superseded', superseded_by = ?
+         WHERE predicate = ? AND subject = ? AND status = 'active' AND cardinality = 'single' AND id <> ?`
+      ).run(id, fact.predicate, fact.subject, id);
+    }
     db.prepare(`UPDATE facts SET status = 'active', superseded_by = NULL WHERE id = ?`).run(id);
   })();
 }
@@ -387,6 +462,11 @@ export function getActiveFactsByPredicate(predicate: string, subject = 'user'): 
       `SELECT * FROM facts WHERE predicate = ? AND subject = ? AND status = 'active' ORDER BY id DESC`
     )
     .all(normalized.predicate, normalized.subject) as FactRow[];
+}
+
+export function getDbFactById(id: number): FactRow | undefined {
+  const row = getDb().prepare(`SELECT * FROM facts WHERE id = ?`).get(id) as FactRow | undefined;
+  return row ? toNullable(row) : undefined;
 }
 
 export function deleteFact(id: number) {
@@ -457,7 +537,8 @@ export function promoteTaskToMemory(
       importance: opts?.importance ?? 0.8,
       kind: 'task_memory',
       keywords_json: '[]',
-      entities_json: '[]'
+      entities_json: '[]',
+      recall_policy: opts?.recall_policy ?? 'on_topic'
     });
     if (summaryId) {
       appendMemorySource({
@@ -507,12 +588,13 @@ export function appendConversationSummary(row: {
   kind: string;
   keywords_json?: string;
   entities_json?: string;
+  recall_policy?: RecallPolicy;
 }): number {
   const r = getDb()
     .prepare(
       `INSERT OR IGNORE INTO conversation_summaries
        (ts, episode_start_id, episode_end_id, persona_id, title, summary, importance, kind, keywords_json, entities_json, created_at, status, recall_policy)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'on_topic')`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
     )
     .run(
       row.ts,
@@ -525,7 +607,8 @@ export function appendConversationSummary(row: {
       row.kind.trim() || 'conversation',
       row.keywords_json ?? '[]',
       row.entities_json ?? '[]',
-      Date.now()
+      Date.now(),
+      requireRecallPolicy(row.recall_policy ?? 'on_topic')
     );
   if (r.lastInsertRowid) return Number(r.lastInsertRowid);
   const existing = getDb()
@@ -568,6 +651,32 @@ export function listConversationSummaries(opts?: {
     .map((row) => toNullable(row as ConversationSummaryRow));
 }
 
+export function listRecallableConversationSummaries(opts?: {
+  limit?: number;
+  query?: string;
+  alwaysOnly?: boolean;
+}): ConversationSummaryRow[] {
+  const limit = clampLimit(opts?.limit, 5, 50);
+  const values: any[] = [];
+  let sql = `SELECT * FROM conversation_summaries WHERE status = 'active'`;
+  if (opts?.alwaysOnly || !opts?.query?.trim()) {
+    sql += ` AND recall_policy = 'always'`;
+  } else {
+    sql += ` AND recall_policy IN ('always', 'on_topic')`;
+  }
+  if (opts?.query?.trim()) {
+    const q = `%${opts.query.trim()}%`;
+    sql += ` AND (title LIKE ? OR summary LIKE ? OR keywords_json LIKE ? OR entities_json LIKE ?)`;
+    values.push(q, q, q, q);
+  }
+  sql += ` ORDER BY CASE recall_policy WHEN 'always' THEN 0 ELSE 1 END, importance DESC, id DESC LIMIT ?`;
+  values.push(limit);
+  return getDb()
+    .prepare(sql)
+    .all(...values)
+    .map((row) => toNullable(row as ConversationSummaryRow));
+}
+
 export function getConversationSummaryById(id: number): ConversationSummaryRow | undefined {
   const row = getDb()
     .prepare(`SELECT * FROM conversation_summaries WHERE id = ?`)
@@ -599,18 +708,24 @@ export function claimNextMemoryJob(types: string[]): MemoryJobRow | undefined {
   if (!types.length) return undefined;
   const db = getDb();
   const placeholders = types.map(() => '?').join(',');
+  const now = Date.now();
   return db.transaction(() => {
     const job = db
       .prepare(
-        `SELECT * FROM memory_jobs WHERE status = 'pending' AND type IN (${placeholders})
+        `SELECT * FROM memory_jobs
+         WHERE status = 'pending'
+           AND type IN (${placeholders})
+           AND (next_run_at IS NULL OR next_run_at <= ?)
+           AND attempts < max_attempts
          ORDER BY created_at ASC LIMIT 1`
       )
-      .get(...types) as MemoryJobRow | undefined;
+      .get(...types, now) as MemoryJobRow | undefined;
     if (!job) return undefined;
     db.prepare(
-      `UPDATE memory_jobs SET status = 'running', started_at = ?, attempts = attempts + 1, error = NULL
+      `UPDATE memory_jobs
+       SET status = 'running', started_at = ?, last_heartbeat_at = ?, attempts = attempts + 1, error = NULL
        WHERE id = ?`
-    ).run(Date.now(), job.id);
+    ).run(now, now, job.id);
     const updated = db.prepare(`SELECT * FROM memory_jobs WHERE id = ?`).get(job.id) as MemoryJobRow;
     return toNullable(updated);
   })();
@@ -618,13 +733,17 @@ export function claimNextMemoryJob(types: string[]): MemoryJobRow | undefined {
 
 export function updateMemoryJob(
   id: number,
-  patch: Partial<Pick<MemoryJobRow, 'status' | 'finished_at' | 'result_json' | 'error'>>
+  patch: Partial<Pick<MemoryJobRow, 'status' | 'started_at' | 'finished_at' | 'result_json' | 'error' | 'next_run_at' | 'last_heartbeat_at'>>
 ) {
   const fields: string[] = [];
   const values: any[] = [];
   if (patch.status !== undefined) {
     fields.push('status = ?');
     values.push(requireMemoryJobStatus(patch.status));
+  }
+  if (patch.started_at !== undefined) {
+    fields.push('started_at = ?');
+    values.push(patch.started_at);
   }
   if (patch.finished_at !== undefined) {
     fields.push('finished_at = ?');
@@ -637,6 +756,14 @@ export function updateMemoryJob(
   if (patch.error !== undefined) {
     fields.push('error = ?');
     values.push(patch.error);
+  }
+  if (patch.next_run_at !== undefined) {
+    fields.push('next_run_at = ?');
+    values.push(patch.next_run_at);
+  }
+  if (patch.last_heartbeat_at !== undefined) {
+    fields.push('last_heartbeat_at = ?');
+    values.push(patch.last_heartbeat_at);
   }
   if (!fields.length) return;
   values.push(id);
@@ -660,13 +787,149 @@ export function listMemoryJobs(opts?: {
     .map((row) => toNullable(row as MemoryJobRow));
 }
 
+function retryDelayMs(attempts: number): number {
+  if (attempts <= 1) return 30_000;
+  if (attempts === 2) return 120_000;
+  return 600_000;
+}
+
+export function failOrRetryMemoryJob(job: MemoryJobRow, error: string, retryable = true) {
+  const now = Date.now();
+  const attempts = Number(job.attempts ?? 0);
+  const maxAttempts = Number(job.max_attempts ?? 3);
+  if (retryable && attempts < maxAttempts) {
+    getDb()
+      .prepare(
+        `UPDATE memory_jobs
+         SET status = 'pending', finished_at = ?, next_run_at = ?, error = ?
+         WHERE id = ?`
+      )
+      .run(now, now + retryDelayMs(attempts), error, job.id);
+    return;
+  }
+  updateMemoryJob(job.id, { status: 'failed', finished_at: now, error });
+}
+
+export function recoverStaleMemoryJobs(opts?: { olderThanMs?: number }) {
+  const olderThanMs = opts?.olderThanMs ?? 10 * 60 * 1000;
+  const now = Date.now();
+  const staleBefore = now - olderThanMs;
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT * FROM memory_jobs WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?`)
+    .all(staleBefore) as MemoryJobRow[];
+  db.transaction(() => {
+    for (const job of rows) {
+      const attempts = Number(job.attempts ?? 0);
+      const maxAttempts = Number(job.max_attempts ?? 3);
+      if (attempts < maxAttempts) {
+        db.prepare(
+          `UPDATE memory_jobs SET status = 'pending', next_run_at = ?, error = ? WHERE id = ?`
+        ).run(now, 'Recovered stale running job after app restart', job.id);
+      } else {
+        db.prepare(
+          `UPDATE memory_jobs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?`
+        ).run(now, 'Stale running job exceeded max attempts', job.id);
+      }
+    }
+  })();
+  return rows.length;
+}
+
 export function retryMemoryJob(id: number) {
   getDb()
     .prepare(
-      `UPDATE memory_jobs SET status = 'pending', started_at = NULL, finished_at = NULL, error = NULL
+      `UPDATE memory_jobs
+       SET status = 'pending', started_at = NULL, finished_at = NULL, next_run_at = NULL, last_heartbeat_at = NULL, attempts = 0, error = NULL
        WHERE id = ? AND status = 'failed'`
     )
     .run(id);
+}
+
+// ===== Embeddings =====
+export function upsertMemoryEmbedding(row: {
+  memory_type: EmbeddableMemoryType;
+  memory_id: number;
+  provider_id?: string;
+  model: string;
+  dimensions: number;
+  vector: Buffer;
+  text_hash: string;
+  source_text?: string;
+}) {
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO memory_embeddings
+       (memory_type, memory_id, provider_id, model, dimensions, vector, text_hash, source_text, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(memory_type, memory_id, model) DO UPDATE SET
+         provider_id = excluded.provider_id,
+         dimensions = excluded.dimensions,
+         vector = excluded.vector,
+         text_hash = excluded.text_hash,
+         source_text = excluded.source_text,
+         updated_at = excluded.updated_at`
+    )
+    .run(
+      row.memory_type,
+      row.memory_id,
+      row.provider_id ?? null,
+      row.model,
+      row.dimensions,
+      row.vector,
+      row.text_hash,
+      row.source_text ?? null,
+      now,
+      now
+    );
+}
+
+export function getMemoryEmbedding(memoryType: EmbeddableMemoryType, memoryId: number, model: string): MemoryEmbeddingRow | undefined {
+  const row = getDb()
+    .prepare(`SELECT * FROM memory_embeddings WHERE memory_type = ? AND memory_id = ? AND model = ?`)
+    .get(memoryType, memoryId, model) as MemoryEmbeddingRow | undefined;
+  return row ? toNullable(row) : undefined;
+}
+
+export function listMemoryEmbeddings(model: string, memoryTypes: EmbeddableMemoryType[], limit = 5000): MemoryEmbeddingRow[] {
+  if (!memoryTypes.length) return [];
+  const safeLimit = clampLimit(limit, 5000, 50000);
+  const placeholders = memoryTypes.map(() => '?').join(',');
+  return getDb()
+    .prepare(`SELECT * FROM memory_embeddings WHERE model = ? AND memory_type IN (${placeholders}) ORDER BY id DESC LIMIT ?`)
+    .all(model, ...memoryTypes, safeLimit)
+    .map((row) => toNullable(row as MemoryEmbeddingRow));
+}
+
+export function deleteMemoryEmbeddingForMemory(memoryType: EmbeddableMemoryType, memoryId: number) {
+  getDb().prepare(`DELETE FROM memory_embeddings WHERE memory_type = ? AND memory_id = ?`).run(memoryType, memoryId);
+}
+
+export function listEmbeddableMemoryItems(model: string, limit = 32): Array<{ memory_type: EmbeddableMemoryType; memory_id: number }> {
+  const safeLimit = clampLimit(limit, 32, 200);
+  const summaries = getDb()
+    .prepare(
+      `SELECT 'conversation_summary' AS memory_type, s.id AS memory_id
+       FROM conversation_summaries s
+       LEFT JOIN memory_embeddings e ON e.memory_type = 'conversation_summary' AND e.memory_id = s.id AND e.model = ?
+       WHERE s.status = 'active' AND s.recall_policy != 'never' AND e.id IS NULL
+       ORDER BY s.id DESC LIMIT ?`
+    )
+    .all(model, safeLimit) as Array<{ memory_type: EmbeddableMemoryType; memory_id: number }>;
+  const remaining = Math.max(0, safeLimit - summaries.length);
+  const facts = remaining
+    ? (getDb()
+        .prepare(
+          `SELECT 'fact' AS memory_type, f.id AS memory_id
+           FROM facts f
+           LEFT JOIN memory_embeddings e ON e.memory_type = 'fact' AND e.memory_id = f.id AND e.model = ?
+           WHERE f.status = 'active' AND e.id IS NULL
+           ORDER BY f.id DESC LIMIT ?`
+        )
+        .all(model, remaining) as Array<{ memory_type: EmbeddableMemoryType; memory_id: number }>)
+    : [];
+  return [...summaries, ...facts];
 }
 
 // ===== Sources / graph sync =====
@@ -745,6 +1008,7 @@ export function getMemoryStats(): MemoryStats {
   const tasks = (db.prepare(`SELECT COUNT(*) AS c FROM tasks`).get() as any).c;
   const summaries = (db.prepare(`SELECT COUNT(*) AS c FROM conversation_summaries`).get() as any).c;
   const pendingMemoryJobs = (db.prepare(`SELECT COUNT(*) AS c FROM memory_jobs WHERE status = 'pending'`).get() as any).c;
+  const runningMemoryJobs = (db.prepare(`SELECT COUNT(*) AS c FROM memory_jobs WHERE status = 'running'`).get() as any).c;
   const failedMemoryJobs = (db.prepare(`SELECT COUNT(*) AS c FROM memory_jobs WHERE status = 'failed'`).get() as any).c;
   const graphSynced = (db.prepare(`SELECT COUNT(*) AS c FROM graph_sync_state WHERE status = 'synced'`).get() as any).c;
   const graphFailed = (db.prepare(`SELECT COUNT(*) AS c FROM graph_sync_state WHERE status = 'failed'`).get() as any).c;
@@ -755,6 +1019,7 @@ export function getMemoryStats(): MemoryStats {
     tasks,
     summaries,
     pendingMemoryJobs,
+    runningMemoryJobs,
     failedMemoryJobs,
     graphSynced,
     graphFailed,

@@ -10,6 +10,7 @@ import {
   upsertFact,
   upsertGraphSyncState
 } from './store';
+import { embedMemoryItem, embedMissingMemories } from './embeddings';
 import { extractMemoryFromEpisodePair, type MemoryExtraction } from './extractor';
 import { syncConversationSummaryToGraph } from './graph';
 import type { MemoryJobRow } from '../../shared/types';
@@ -29,6 +30,14 @@ export async function processMemoryJob(job: MemoryJobRow) {
   }
   if (job.type === 'graph_sync_summary') {
     await syncSummaryJob(job);
+    return;
+  }
+  if (job.type === 'embed_memory_item') {
+    await embedMemoryItemJob(job);
+    return;
+  }
+  if (job.type === 'embed_missing_memories') {
+    await embedMissingMemoriesJob(job);
     return;
   }
   throw new Error(`未知 memory job type: ${job.type}`);
@@ -103,6 +112,33 @@ async function digestEpisodePair(job: MemoryJobRow) {
       payload_json: JSON.stringify({ summaryId, extraction })
     });
   }
+  if (cfg.embeddingEnabled) {
+    if (summaryId) {
+      enqueueMemoryJob({
+        type: 'embed_memory_item',
+        dedupe_key: `embed_memory_item:conversation_summary:${summaryId}`,
+        payload_json: JSON.stringify({ memoryType: 'conversation_summary', memoryId: summaryId })
+      });
+    }
+    for (const factId of factIds) {
+      enqueueMemoryJob({
+        type: 'embed_memory_item',
+        dedupe_key: `embed_memory_item:fact:${factId}`,
+        payload_json: JSON.stringify({ memoryType: 'fact', memoryId: factId })
+      });
+    }
+  }
+}
+
+async function embedMemoryItemJob(job: MemoryJobRow) {
+  const payload = parsePayload<{ memoryType: 'conversation_summary' | 'fact'; memoryId: number }>(job);
+  const result = await embedMemoryItem(payload.memoryType, payload.memoryId);
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify(result) });
+}
+
+async function embedMissingMemoriesJob(job: MemoryJobRow) {
+  const result = await embedMissingMemories();
+  updateMemoryJob(job.id, { status: 'done', finished_at: Date.now(), result_json: JSON.stringify(result) });
 }
 
 async function syncSummaryJob(job: MemoryJobRow) {

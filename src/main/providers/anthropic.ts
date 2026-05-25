@@ -7,7 +7,9 @@ import type {
   ChatResponse,
   ToolDefinition,
   ChatMessage,
-  ToolCall
+  ToolCall,
+  EmbeddingRequest,
+  EmbeddingResponse
 } from '../../shared/types';
 
 function trimSlash(s: string): string {
@@ -152,6 +154,13 @@ export async function chatAnthropic(
       cachedInputTokens: data.usage?.cache_read_input_tokens
     }
   };
+}
+
+export async function embedAnthropic(
+  _cfg: ProviderConfig,
+  _req: EmbeddingRequest
+): Promise<EmbeddingResponse> {
+  throw new Error('Anthropic provider 当前不支持 embeddings，请使用 OpenAI-compatible 或 Gemini embedding provider');
 }
 
 // Anthropic 没有 /v1/models 标准接口 (有但需要 admin key); 我们直接返回 null, 让用户手填

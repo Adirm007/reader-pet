@@ -208,6 +208,33 @@ export default function MemorySection() {
               <input type="checkbox" checked={cfg.memory.graphRecallEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, graphRecallEnabled: e.target.checked } })} />
               聊天时图谱召回
             </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={cfg.memory.embeddingEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingEnabled: e.target.checked } })} />
+              启用 Embedding 向量索引
+            </label>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={cfg.memory.vectorRecallEnabled} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorRecallEnabled: e.target.checked } })} />
+              聊天时向量召回
+            </label>
+            <label>
+              Embedding Provider
+              <select value={cfg.memory.embeddingProviderId ?? ''} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingProviderId: e.target.value || undefined } })}>
+                <option value="">使用当前激活 Provider</option>
+                {cfg.providers.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+              </select>
+            </label>
+            <label>
+              Embedding Model
+              <input value={cfg.memory.embeddingModel} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, embeddingModel: e.target.value } })} placeholder="例如 text-embedding-3-small / text-embedding-004" />
+            </label>
+            <label>
+              Vector Recall Limit
+              <input type="number" min={1} max={20} value={cfg.memory.vectorRecallLimit} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorRecallLimit: Number(e.target.value) } })} />
+            </label>
+            <label>
+              Vector Min Score
+              <input type="number" min={0} max={1} step={0.01} value={cfg.memory.vectorMinScore} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, vectorMinScore: Number(e.target.value) } })} />
+            </label>
             <label>
               Neo4j URI
               <input value={cfg.memory.neo4jUri} onChange={(e) => setCfg({ ...cfg, memory: { ...cfg.memory, neo4jUri: e.target.value } })} />
@@ -224,6 +251,7 @@ export default function MemorySection() {
               <button className="primary" onClick={saveMemoryConfig}>保存配置</button>
               <button onClick={testGraph}>测试 Neo4j 连接</button>
               <button onClick={async () => { await window.api.memKickDigestion(); refresh(); }}>整理 pending job</button>
+              <button onClick={async () => { await window.api.memBackfillEmbeddings(); refresh(); }}>补齐向量索引</button>
             </div>
             {graphMessage && <p className="muted">{graphMessage}</p>}
           </div>
@@ -246,9 +274,9 @@ export default function MemorySection() {
           </div>
           <label className="checkbox-row"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />显示全部事实状态</label>
           <h3>语义事实</h3>
-          <table className="cap-table"><thead><tr><th>ID</th><th>Predicate</th><th>Subject</th><th>Object</th><th>状态</th><th>置信</th><th>操作</th></tr></thead><tbody>
-            {facts.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
-            {facts.map((f) => <tr key={f.id}><td>{f.id}</td><td>{f.predicate}</td><td>{f.subject}</td><td>{f.object}</td><td><span className="memory-policy-badge">{f.status}</span></td><td>{f.confidence.toFixed(2)}</td><td><button className="mini" onClick={() => openSources({ type: 'fact', id: f.id, title: `fact #${f.id}` })}>来源</button> {f.status === 'active' ? <button className="mini" onClick={() => retract(f.id)}>retract</button> : <button className="mini" onClick={() => reactivate(f.id)}>reactivate</button>} <button className="mini danger" onClick={() => purge(f.id)}>×</button></td></tr>)}
+          <table className="cap-table"><thead><tr><th>ID</th><th>Predicate</th><th>Subject</th><th>Object</th><th>类型</th><th>状态</th><th>置信</th><th>操作</th></tr></thead><tbody>
+            {facts.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
+            {facts.map((f) => <tr key={f.id}><td>{f.id}</td><td>{f.predicate}</td><td>{f.subject}</td><td>{f.object}</td><td><span className="memory-policy-badge">{f.cardinality ?? 'single'}</span></td><td><span className="memory-policy-badge">{f.status}</span></td><td>{f.confidence.toFixed(2)}</td><td><button className="mini" onClick={() => openSources({ type: 'fact', id: f.id, title: `fact #${f.id}` })}>来源</button> {f.status === 'active' ? <button className="mini" onClick={() => retract(f.id)}>retract</button> : <button className="mini" onClick={() => reactivate(f.id)}>reactivate</button>} <button className="mini danger" onClick={() => purge(f.id)}>×</button></td></tr>)}
           </tbody></table>
 
           <h3>对话 / 任务摘要</h3>
@@ -292,9 +320,9 @@ export default function MemorySection() {
       {tab === 'jobs' && (
         <div>
           <p className="memory-debug-note">后台整理任务用于把对话证据提炼为长期记忆。失败的 job 可以重试。</p>
-          <table className="cap-table"><thead><tr><th>ID</th><th>类型</th><th>状态</th><th>尝试</th><th>创建时间</th><th>错误</th><th></th></tr></thead><tbody>
-            {jobs.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
-            {jobs.map((j) => <tr key={j.id}><td>{j.id}</td><td>{j.type}</td><td>{j.status}</td><td>{j.attempts}</td><td>{new Date(j.created_at).toLocaleString()}</td><td>{(j.error ?? '').slice(0, 220)}</td><td>{j.status === 'failed' && <button className="mini" onClick={async () => { await window.api.memRetryJob(j.id); refresh(); }}>retry</button>}</td></tr>)}
+          <table className="cap-table"><thead><tr><th>ID</th><th>类型</th><th>状态</th><th>尝试</th><th>创建</th><th>开始</th><th>下次</th><th>错误</th><th></th></tr></thead><tbody>
+            {jobs.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center' }}>暂无</td></tr>}
+            {jobs.map((j) => <tr key={j.id}><td>{j.id}</td><td>{j.type}</td><td>{j.status}</td><td>{j.attempts}/{j.max_attempts ?? 3}</td><td>{new Date(j.created_at).toLocaleString()}</td><td>{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</td><td>{j.next_run_at ? new Date(j.next_run_at).toLocaleString() : '-'}</td><td>{(j.error ?? '').slice(0, 220)}</td><td>{j.status === 'failed' && <button className="mini" onClick={async () => { await window.api.memRetryJob(j.id); refresh(); }}>retry</button>}</td></tr>)}
           </tbody></table>
         </div>
       )}

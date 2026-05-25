@@ -9,6 +9,7 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  embeddingModel?: string;
   extraHeaders?: Record<string, string>;
 }
 
@@ -39,13 +40,28 @@ export interface CapabilityFlags {
 export interface McpServerConfig {
   id: string;
   displayName: string;
+  transport?: 'stdio' | 'http';
   command: string;
   args: string[];
   cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
   enabled: boolean;
   riskLevel: 'medium' | 'high' | 'critical';
   allowedTools?: string[];
   allowAllTools?: boolean;
+}
+
+export type DesktopAutomationAction =
+  | { type: 'click'; x: number; y: number; button?: 'left' | 'right' | 'middle' }
+  | { type: 'typeText'; text: string }
+  | { type: 'hotkey'; hotkey: string }
+  | { type: 'wait'; ms: number };
+
+export interface DesktopAutomationQueueRequest {
+  actions: DesktopAutomationAction[];
+  dryRun?: boolean;
+  description?: string;
 }
 
 export interface AutomationConfig {
@@ -54,7 +70,12 @@ export interface AutomationConfig {
   playwrightMcpCwd?: string;
   maaCommand: string;
   maaWorkingDir: string;
+  maaAssetsDir: string;
+  maaTaskConfigPath: string;
+  maaDefaultTask: string;
+  maaExtraArgs: string[];
   cliAnythingCommand: string;
+  cliAnythingArgs: string[];
   cliAnythingWorkingDir: string;
   desktopAutomationProvider: 'none' | 'nutjs' | 'powershell';
 }
@@ -146,6 +167,13 @@ export interface MemoryConfig {
   graphRecallEnabled: boolean;
   digestionEnabled: boolean;
   graphRecallTimeoutMs: number;
+  embeddingEnabled: boolean;
+  embeddingProviderId?: string;
+  embeddingModel: string;
+  vectorRecallEnabled: boolean;
+  vectorRecallLimit: number;
+  vectorMinScore: number;
+  embeddingBackfillBatchSize: number;
 }
 
 export interface AppConfig {
@@ -220,6 +248,18 @@ export interface ChatResponse {
   usage?: ChatUsage;
 }
 
+export interface EmbeddingRequest {
+  texts: string[];
+  model?: string;
+}
+
+export interface EmbeddingResponse {
+  model: string;
+  dimensions: number;
+  vectors: Array<{ textIndex: number; vector: number[] }>;
+  usage?: { inputTokens?: number };
+}
+
 export interface PersonaMeta {
   id: 'reader' | 'shoujo' | 'genki' | 'weirdo';
   display_name: string;
@@ -282,6 +322,8 @@ export interface EpisodeRow {
 export type RecallPolicy = 'always' | 'on_topic' | 'manual_only' | 'never';
 export type TaskMemoryStatus = 'routine' | 'candidate' | 'promoted' | 'unimportant' | 'disabled';
 export type FactStatus = 'active' | 'superseded' | 'retracted';
+export type FactCardinality = 'single' | 'set';
+export type EmbeddableMemoryType = 'conversation_summary' | 'fact';
 export interface FactRow {
   id: number;
   predicate: string;       // 例如 "favorite_color" / "current_project" / "preferred_name"
@@ -289,6 +331,7 @@ export interface FactRow {
   object: string;          // 实际值
   confidence: number;      // 0~1
   status: FactStatus;
+  cardinality: FactCardinality;
   created_at: number;
   superseded_by?: number;
   source_episode_id?: number;
@@ -337,9 +380,26 @@ export interface MemoryJobRow {
   started_at?: number;
   finished_at?: number;
   attempts: number;
+  next_run_at?: number;
+  max_attempts: number;
+  last_heartbeat_at?: number;
   payload_json: string;
   result_json?: string;
   error?: string;
+}
+
+export interface MemoryEmbeddingRow {
+  id: number;
+  memory_type: EmbeddableMemoryType;
+  memory_id: number;
+  provider_id?: string;
+  model: string;
+  dimensions: number;
+  vector: Buffer;
+  text_hash: string;
+  source_text?: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface MemorySourceRow {
@@ -369,6 +429,7 @@ export interface MemoryStats {
   tasks: number;
   summaries: number;
   pendingMemoryJobs: number;
+  runningMemoryJobs: number;
   failedMemoryJobs: number;
   graphSynced: number;
   graphFailed: number;

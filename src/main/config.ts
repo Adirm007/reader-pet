@@ -47,7 +47,12 @@ const defaults: AppConfig = {
     playwrightMcpCwd: '',
     maaCommand: '',
     maaWorkingDir: '',
+    maaAssetsDir: '',
+    maaTaskConfigPath: '',
+    maaDefaultTask: '',
+    maaExtraArgs: [],
     cliAnythingCommand: '',
+    cliAnythingArgs: [],
     cliAnythingWorkingDir: '',
     desktopAutomationProvider: 'none'
   },
@@ -92,7 +97,14 @@ const defaults: AppConfig = {
     graphWriteEnabled: false,
     graphRecallEnabled: false,
     digestionEnabled: false,
-    graphRecallTimeoutMs: 1200
+    graphRecallTimeoutMs: 1200,
+    embeddingEnabled: false,
+    embeddingProviderId: undefined,
+    embeddingModel: '',
+    vectorRecallEnabled: false,
+    vectorRecallLimit: 8,
+    vectorMinScore: 0.25,
+    embeddingBackfillBatchSize: 32
   }
 };
 
